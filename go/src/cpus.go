@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -31,12 +32,21 @@ func complex_task() float32 {
 
 func fulfil_observation(number_of_cpus int) int {
 
+	var syncler sync.WaitGroup
+
 	time_start := time.Now()
 
-	_ = complex_task()
+	for i := 0; i < number_of_cpus; i++ {
+		syncler.Add(1)
+		go func() {
+			_ = complex_task()
+			syncler.Done()
+		}()
+	}
+
+	syncler.Wait()
 
 	time_finish := time.Now()
-
 	duration := time_finish.Sub(time_start)
 
 	return int(duration.Milliseconds())
