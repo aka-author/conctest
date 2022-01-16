@@ -1,77 +1,63 @@
 // * * ** *** ***** ******** ************* *********************
-// Observing concurent code execution in Rust
+// Observing concurent code execution on Rust
 // * * ** *** ***** ******** ************* *********************
 
+use std::env;
+use std::panic;
 use std::time::*;
 use num_cpus;
 use rand;
+use thousands::Separable;
 
 
 // Retrieving system parameters
 
 fn count_cpus() -> usize {
-    return num_cpus::get()
+    num_cpus::get()
 }
 
 
 // Spending time
 
-fn random_sequence_member() -> isize {
+type MemberTriplet = (isize, isize, isize);
+
+fn random_member() -> isize {
     let seed:f64 = rand::random();
-    return (seed*10f64).floor() as isize;
+    (seed*10f64).floor() as isize
 }
 
-fn complex_task(number_of_iterations: usize) {
-
-    let mut r1: isize = random_sequence_member();
-    let mut r2: isize = random_sequence_member();
-    let mut r3: isize = random_sequence_member();
-    let mut r4: isize;
-
-    for _i in 0..number_of_iterations {
-        r4 = r1 + r2 - r3; 
-        r1 = r2;
-        r2 = r3;
-        r3 = r4;
-    }
+fn get_next_member(triplet: MemberTriplet) -> MemberTriplet {
+    (triplet.1, triplet.2, triplet.0 + triplet.1 - triplet.2)
 }
 
-fn get_number_of_iterations() -> usize {
+fn random_triplet() -> MemberTriplet {
+    (random_member(), random_member(), random_member())
+}
 
-    let mut iterations_per_10ms: usize = 0;
+fn generate_members(initial_triplet: MemberTriplet, number_of_members: usize) {
 
-    let clock = SystemTime::now();
-    let mut mills: u128 = 0;
+    let mut triplet = initial_triplet;
 
-    while mills <= 10 {
+    for _i in 0..number_of_members {
+        triplet = get_next_member(triplet);
+    }    
+}
 
-        complex_task(1);
-        
-        match clock.elapsed() {
-            Ok(elapsed) => {
-                iterations_per_10ms += 1; 
-                mills = elapsed.as_millis();
-            }
-            Err(_e) => {
-                mills = 10;
-            }
-        }
-    }
-
-    return iterations_per_10ms*1000;
+fn complex_task(number_of_members: usize) {
+    generate_members(random_triplet(), number_of_members)
 }
 
 
 // Performing observations
 
-fn fulfil_observation(number_of_tasks: usize, number_of_iterations: usize) -> u128 {
+fn fulfil_observation(number_of_tasks: usize, number_of_members: usize) -> u128 {
 
     let clock = SystemTime::now();
 
     crossbeam::scope(|spawner| {
             
             for _task_idx in 0..number_of_tasks {
-                spawner.spawn(|| {complex_task(number_of_iterations)});  
+                spawner.spawn(|| {complex_task(number_of_members)});  
             }
         }
     );
@@ -80,37 +66,78 @@ fn fulfil_observation(number_of_tasks: usize, number_of_iterations: usize) -> u1
         Ok(elapsed) => {
             return elapsed.as_millis();
         }
-        Err(_e) => {
-            return 0;
+        Err(e) => {
+            panic!("Clock runtime error: {}.", e);
         }
     }
 }
 
-fn measure_base_duration(number_of_iterations: usize) -> u128 {
+fn measure_members_per_sec() -> usize {
 
-    let number_of_trys = 10;
+    let mut members_per_sec: usize = 0;
 
-    let mut sumdur: u128 = 0;
+    let clock = SystemTime::now();
+    let mut mills: u128 = 0;
 
-    for _i in 0..number_of_trys {
-        sumdur += fulfil_observation(1, number_of_iterations);
+    let mut triplet: MemberTriplet = (1, 2, 3);
+
+    while mills <= 1000 {
+
+        triplet = get_next_member(triplet);
+        
+        match clock.elapsed() {
+            Ok(elapsed) => {
+                members_per_sec += 1; 
+                mills = elapsed.as_millis();
+            }
+            Err(e) => {
+                panic!("Clock runtime error: {}.", e);
+            }
+        }
     }
 
-    return sumdur/number_of_trys;
+    members_per_sec
+}
+
+fn measure_base_duration(number_of_members: usize) -> u128 {
+
+    let number_of_observations = 100;
+
+    let mut total_duration: u128 = 0;
+
+    for _i in 0..number_of_observations {
+        total_duration += fulfil_observation(1, number_of_members);
+    }
+
+    total_duration/number_of_observations
 }
 
 
 // Printing a report
 
-fn print_report_header(number_of_cpus: usize) {
-    println!("Testing concurent code execution in Rust.");
-    println!("Number of CPUs in the system: {}.", number_of_cpus);
+fn print_report_header() {
+    println!("Testing concurent code execution in Rust");
+    println!("");
+}
+
+fn print_report_sysparams_header() {
+    println!("==========================================");
+    println!("System parameter               Value");
+    println!("==========================================");
 }
 
 fn print_report_table_header() {
     println!("==========================================");
     println!("Tasks  Duration  Relative duration  Profit");
     println!("==========================================");
+}
+
+fn print_number_of_cpus(number_of_cpus: usize) {
+    println!("CPUs available {:27}", number_of_cpus);
+}
+
+fn print_members_per_sec(members_per_sec: usize) {
+    println!("Iterations per second {:>20}", members_per_sec.separate_with_commas());
 }
 
 fn print_report_table_entry(number_of_tasks: usize, base_duration: u128, duration: u128) {
@@ -133,33 +160,42 @@ fn print_report_table_footer() {
 
 fn main() {
 
+    print_report_header();
+
+    let args: Vec<String> = env::args().collect();
+
     let number_of_cpus = count_cpus();
 
-    let number_of_iterations = get_number_of_iterations();
-    
-    print_report_header(number_of_cpus);
-    
-    let mut number_of_tasks: usize;
-    let mut duration: u128;
-    
-    let base_duration = measure_base_duration(number_of_iterations);
+    if args.len() == 1 {
+        print_report_sysparams_header();
+        print_number_of_cpus(number_of_cpus);
+        let members_per_sec = measure_members_per_sec();
+        print_members_per_sec(members_per_sec);
+    } else {
 
-    print_report_table_header();
+        let number_of_iterations = 1_500_000;
+        
+        let mut number_of_tasks: usize;
+        let mut duration: u128;
+        
+        let base_duration = measure_base_duration(number_of_iterations);
 
-    for layer in 0..3 {
-        for cpu in 0..number_of_cpus {
-            number_of_tasks = 1 + cpu + layer*number_of_cpus;
-            duration = fulfil_observation(number_of_tasks, number_of_iterations);
-            print_report_table_entry(number_of_tasks, base_duration, duration);
+        print_report_table_header();
+
+        for layer in 0..3 {
+            for cpu in 0..number_of_cpus {
+                number_of_tasks = 1 + cpu + layer*number_of_cpus;
+                duration = fulfil_observation(number_of_tasks, number_of_iterations);
+                print_report_table_entry(number_of_tasks, base_duration, duration);
+            }
+
+            print_report_table_separator();
         }
 
-        print_report_table_separator();
+        number_of_tasks = number_of_cpus*10;
+        duration = fulfil_observation(number_of_tasks, number_of_iterations);
+        print_report_table_entry(number_of_tasks, base_duration, duration);
     }
 
-    number_of_tasks = number_of_cpus*10;
-    duration = fulfil_observation(number_of_tasks, number_of_iterations);
-    print_report_table_entry(number_of_tasks, base_duration, duration);
-
     print_report_table_footer();
-    println!("{} ", number_of_iterations);
 }

@@ -1,3 +1,7 @@
+// * * ** *** ***** ******** ************* *********************
+// Observing concurent code execution on Go
+// * * ** *** ***** ******** ************* *********************
+
 package main
 
 import (
@@ -107,8 +111,6 @@ func main() {
 	var number_of_tasks, duration int
 
 	base_duration := measure_base_duration()
-
-	print_report_table_header()
 
 	for layer := 0; layer < 3; layer++ {
 		for cpu := 0; cpu < number_of_cpus; cpu++ {
