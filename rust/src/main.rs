@@ -8,6 +8,7 @@ use std::time::*;
 use num_cpus;
 use rand;
 use thousands::Separable;
+use regex::Regex;
 
 
 // Retrieving system parameters
@@ -101,7 +102,7 @@ fn measure_members_per_sec() -> usize {
 
 fn measure_base_duration(number_of_members: usize) -> u128 {
 
-    let number_of_observations = 100;
+    let number_of_observations = 10;
 
     let mut total_duration: u128 = 0;
 
@@ -110,6 +111,17 @@ fn measure_base_duration(number_of_members: usize) -> u128 {
     }
 
     total_duration/number_of_observations
+}
+
+
+// Parsing arguments 
+
+fn validate_usize(s: &String) -> bool {   
+    Regex::new(r"^\d+$").unwrap().is_match(&s)
+}
+
+fn parse_usize(s: &String) -> usize {
+    s.parse::<usize>().unwrap()
 }
 
 
@@ -155,6 +167,10 @@ fn print_report_table_footer() {
     println!("==========================================");
 }
 
+fn print_args_info() {
+    println!("Pass args: <Number of members> <Number of layers>");
+}
+
 
 // Performing observations and printing a report
 
@@ -171,31 +187,41 @@ fn main() {
         print_number_of_cpus(number_of_cpus);
         let members_per_sec = measure_members_per_sec();
         print_members_per_sec(members_per_sec);
-    } else {
+        print_report_table_footer();
+    } else if args.len() == 3 {
 
-        let number_of_iterations = 1_500_000;
-        
-        let mut number_of_tasks: usize;
-        let mut duration: u128;
-        
-        let base_duration = measure_base_duration(number_of_iterations);
+        if validate_usize(&args[1]) && validate_usize(&args[2]) {
 
-        print_report_table_header();
+            let number_of_members = parse_usize(&args[1]);
+            let number_of_layers = parse_usize(&args[2]);
 
-        for layer in 0..3 {
-            for cpu in 0..number_of_cpus {
-                number_of_tasks = 1 + cpu + layer*number_of_cpus;
-                duration = fulfil_observation(number_of_tasks, number_of_iterations);
-                print_report_table_entry(number_of_tasks, base_duration, duration);
-            }
+            let mut number_of_tasks: usize;
+            let mut duration: u128;
+            
+            print_report_table_header();
 
-            print_report_table_separator();
+            let base_duration = measure_base_duration(number_of_members);
+
+            for layer in 0..number_of_layers {
+                for cpu in 0..number_of_cpus {
+                    number_of_tasks = 1 + cpu + layer*number_of_cpus;
+                    duration = fulfil_observation(number_of_tasks, number_of_members);
+                    print_report_table_entry(number_of_tasks, base_duration, duration);
+                }
+
+                print_report_table_separator();
+            } 
+
+            number_of_tasks = number_of_cpus*10;
+            duration = fulfil_observation(number_of_tasks, number_of_members);
+            print_report_table_entry(number_of_tasks, base_duration, duration);
+
+            print_report_table_footer();
+        } else {
+            print_args_info();
         }
 
-        number_of_tasks = number_of_cpus*10;
-        duration = fulfil_observation(number_of_tasks, number_of_iterations);
-        print_report_table_entry(number_of_tasks, base_duration, duration);
+    } else {
+        print_args_info();
     }
-
-    print_report_table_footer();
 }
