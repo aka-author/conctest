@@ -20,11 +20,10 @@ fn count_cpus() -> usize {
 
 // Spending time
 
-type MemberTriplet = (isize, isize, isize);
+type MemberTriplet = (f64, f64, f64);
 
-fn random_member() -> isize {
-    let seed:f64 = rand::random();
-    (seed*10f64).floor() as isize
+fn random_member() -> f64 {    
+    rand::random()
 }
 
 fn get_next_member(triplet: MemberTriplet) -> MemberTriplet {
@@ -80,7 +79,7 @@ fn measure_members_per_sec() -> usize {
     let clock = SystemTime::now();
     let mut mills: u128 = 0;
 
-    let mut triplet: MemberTriplet = (1, 2, 3);
+    let mut triplet = random_triplet();
 
     while mills <= 1000 {
 
@@ -168,7 +167,9 @@ fn print_report_table_footer() {
 }
 
 fn print_args_info() {
-    println!("Pass args: <Number of members> <Number of layers>");
+    println!("Requesting system parameters: no arguments are required");
+    println!("Performing observations:");
+    println!("   <Number of iterations per task> <Maximal number of tasks per CPU>");
 }
 
 
@@ -193,7 +194,7 @@ fn main() {
         if validate_usize(&args[1]) && validate_usize(&args[2]) {
 
             let number_of_members = parse_usize(&args[1]);
-            let number_of_layers = parse_usize(&args[2]);
+            let max_number_tasks_per_cpu = parse_usize(&args[2]);
 
             let mut number_of_tasks: usize;
             let mut duration: u128;
@@ -202,9 +203,9 @@ fn main() {
 
             let base_duration = measure_base_duration(number_of_members);
 
-            for layer in 0..number_of_layers {
+            for number_tasks_per_cpu in 0..max_number_tasks_per_cpu {
                 for cpu in 0..number_of_cpus {
-                    number_of_tasks = 1 + cpu + layer*number_of_cpus;
+                    number_of_tasks = 1 + cpu + number_tasks_per_cpu*number_of_cpus;
                     duration = fulfil_observation(number_of_tasks, number_of_members);
                     print_report_table_entry(number_of_tasks, base_duration, duration);
                 }
