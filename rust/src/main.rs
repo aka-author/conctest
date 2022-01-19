@@ -9,6 +9,7 @@ use num_cpus;
 use rand;
 use thousands::Separable;
 use regex::Regex;
+use crossbeam::ScopedJoinHandle;
 
 
 // Retrieving system parameters
@@ -21,6 +22,37 @@ fn count_cpus() -> usize {
 // Spending time
 
 type MemberTriplet = (f64, f64, f64);
+
+struct TaskScheduleEntry {
+    started_at: u128,
+    duration: u128
+}
+
+//type TaskSchedule = Vec<TaskScheduleEntry>;
+type TaskSchedule = Vec<Box<TaskScheduleEntry>>;
+
+
+fn get_current_timestamp(clock: &SystemTime) -> u128 {
+    match clock.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => {
+            return duration.as_millis();
+        }
+        Err(e) => {
+            panic!("Clock runtime error: {}.", e);
+        }
+    }
+}
+
+fn get_duration(clock: &SystemTime) -> u128 {
+    match clock.elapsed() {
+        Ok(elapsed) => {
+            return elapsed.as_millis();
+        }
+        Err(e) => {
+            panic!("Clock runtime error: {}.", e);
+        }
+    }
+}
 
 fn random_member() -> f64 {    
     rand::random()
@@ -43,8 +75,18 @@ fn generate_members(initial_triplet: MemberTriplet, number_of_members: usize) {
     }    
 }
 
-fn complex_task(number_of_members: usize) {
-    generate_members(random_triplet(), number_of_members)
+fn complex_task(number_of_members: usize) -> Box<TaskScheduleEntry> {
+
+    let mut entry = Box::new(TaskScheduleEntry{started_at: 0u128, duration: 0u128});
+
+    let clock = SystemTime::now();
+    entry.started_at = get_current_timestamp(&clock);
+
+    generate_members(random_triplet(), number_of_members);
+
+    entry.duration = get_duration(&clock);
+
+    entry
 }
 
 
@@ -54,22 +96,31 @@ fn fulfil_observation(number_of_tasks: usize, number_of_members: usize) -> u128 
 
     let clock = SystemTime::now();
 
+    let mut handles: Vec<ScopedJoinHandle<Box<TaskScheduleEntry>>>; 
+
+    handles = Vec::with_capacity(number_of_tasks-1);
+
     crossbeam::scope(|spawner| {
-            
             for _task_idx in 0..number_of_tasks {
-                spawner.spawn(|| {complex_task(number_of_members)});  
+                handles.push(spawner.spawn(|| {complex_task(number_of_members)})); 
             }
         }
     );
 
-    match clock.elapsed() {
-        Ok(elapsed) => {
-            return elapsed.as_millis();
-        }
-        Err(e) => {
-            panic!("Clock runtime error: {}.", e);
-        }
+    let mut task_schedule: TaskSchedule; 
+    task_schedule = Vec::with_capacity(number_of_tasks-1);
+
+    for handle in handles {
+        task_schedule.push(handle.join());
     }
+
+    let base = task_schedule[0].started_at + 0;
+
+    for entry in task_schedule {
+        println!("Dur: {}", entry.started_at - base);
+    }
+
+    get_duration(&clock)
 }
 
 fn measure_members_per_sec() -> usize {
@@ -213,9 +264,9 @@ fn main() {
                 print_report_table_separator();
             } 
 
-            number_of_tasks = number_of_cpus*10;
+            /*number_of_tasks = number_of_cpus*10;
             duration = fulfil_observation(number_of_tasks, number_of_members);
-            print_report_table_entry(number_of_tasks, base_duration, duration);
+            print_report_table_entry(number_of_tasks, base_duration, duration);*/
 
             print_report_table_footer();
         } else {
