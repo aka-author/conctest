@@ -226,12 +226,116 @@ fn print_args_info() {
 
 // Performing observations and printing a report
 
+type ArgsVec = Vec<String>;
+
+#[derive(PartialEq)]
+enum Command {
+    Help,
+    RequestSysParams,
+    MeasureConcurentProfit,
+    MeasureStartDelays
+}
+
+fn accept_command(args: &ArgsVec) -> Command {
+
+    let mut cmd: Command = Command::Help;
+
+    if args.len() > 1 {
+        match &*args[1] {
+            "s" => {cmd = Command::RequestSysParams;}
+            "p" => {cmd = Command::MeasureConcurentProfit;}
+            "d" => {cmd = Command::MeasureStartDelays;}
+            _   => {cmd = Command::Help;}
+        }
+    } 
+
+    cmd
+}
+
+fn accept_max_number_tasks_per_cpu(args: &ArgsVec) -> usize {
+    parse_usize(&args[2])
+}
+
+fn accept_number_of_members(args: &ArgsVec) -> usize {
+    parse_usize(&args[3])
+}
+
+fn print_sysparams() {
+
+    let number_of_cpus = count_cpus();
+    
+    print_report_sysparams_header();
+    print_number_of_cpus(number_of_cpus);
+    let members_per_sec = measure_members_per_sec();
+    print_members_per_sec(members_per_sec);
+    print_report_table_footer();
+}
+
+fn validate_measure_concurent_profit_args(args: &ArgsVec) -> bool {
+    validate_usize(&args[1]) && validate_usize(&args[2])
+}
+
+fn print_concurent_profit(number_of_members: usize, max_number_tasks_per_cpu: usize) {
+    
+    let mut number_of_tasks: usize;
+    let mut duration: u128;
+            
+    print_report_table_header();
+
+    let number_of_cpus = count_cpus();
+
+    let base_duration = measure_base_duration(number_of_members);
+
+    for number_tasks_per_cpu in 0..max_number_tasks_per_cpu {
+        for cpu in 0..number_of_cpus {
+            number_of_tasks = 1 + cpu + number_tasks_per_cpu*number_of_cpus;
+            duration = fulfil_observation(number_of_tasks, number_of_members);
+            print_report_table_entry(number_of_tasks, base_duration, duration);
+        }
+
+        print_report_table_separator();
+    } 
+
+    print_report_table_footer();
+}
+
 fn main() {
 
     print_report_header();
 
     let args: Vec<String> = env::args().collect();
 
+    match accept_command(&args) {
+        Command::Help => {
+            print_args_info();
+        }
+        Command::RequestSysParams => {
+            print_sysparams();
+        }
+        Command::MeasureConcurentProfit => {
+            if validate_measure_concurent_profit_args(&args) {
+                print_concurent_profit(
+                    accept_max_number_tasks_per_cpu(&args),
+                    accept_number_of_members(&args)
+                );
+            } else {
+                print_args_info();
+            }
+        }
+        Command::MeasureStartDelays => {
+
+        }
+    }
+
+
+
+    //println!("{}", accept_command(&args));
+
+    /* if accept_command(&args) == Command::Help {
+        println!("Help");
+    } */
+
+    /*
     let number_of_cpus = count_cpus();
 
     if args.len() == 1 {
@@ -264,9 +368,9 @@ fn main() {
                 print_report_table_separator();
             } 
 
-            /*number_of_tasks = number_of_cpus*10;
+            number_of_tasks = number_of_cpus*10;
             duration = fulfil_observation(number_of_tasks, number_of_members);
-            print_report_table_entry(number_of_tasks, base_duration, duration);*/
+            print_report_table_entry(number_of_tasks, base_duration, duration);
 
             print_report_table_footer();
         } else {
@@ -276,4 +380,5 @@ fn main() {
     } else {
         print_args_info();
     }
+    */
 }
