@@ -1,5 +1,7 @@
 // * * ** *** ***** ******** ************* *********************
-// Observing concurent code execution on Rust
+// Observing concurrent code execution on Rust
+//                                                   (\(\
+//                                                  =('.')=
 // * * ** *** ***** ******** ************* *********************
 
 use std::env;
@@ -10,6 +12,9 @@ use rand;
 use thousands::Separable;
 use regex::Regex;
 use crossbeam::ScopedJoinHandle;
+use std::path::Path;
+use std::fs::File;
+use std::io::Write;
 
 
 // Retrieving system parameters
@@ -19,20 +24,9 @@ fn count_cpus() -> usize {
 }
 
 
-// Spending time
+// Measuring time 
 
-type MemberTriplet = (f64, f64, f64);
-
-struct TaskScheduleEntry {
-    started_at: u128,
-    duration: u128
-}
-
-//type TaskSchedule = Vec<TaskScheduleEntry>;
-type TaskSchedule = Vec<Box<TaskScheduleEntry>>;
-
-
-fn get_current_timestamp(clock: &SystemTime) -> u128 {
+fn get_timestamp(clock: &SystemTime) -> u128 {
     match clock.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(duration) => {
             return duration.as_millis();
@@ -54,35 +48,48 @@ fn get_duration(clock: &SystemTime) -> u128 {
     }
 }
 
-fn random_member() -> f64 {    
+struct ScheduleEntry {
+    started_at: u128,
+    duration: u128
+}
+
+type Schedule = Vec<ScheduleEntry>;
+
+
+// Spending time
+
+type Triplet = (f64, f64, f64);
+
+fn random_item() -> f64 {    
     rand::random()
 }
 
-fn get_next_member(triplet: MemberTriplet) -> MemberTriplet {
+fn random_triplet() -> Triplet {
+    (random_item(), random_item(), random_item())
+}
+
+fn get_next_triplet(triplet: Triplet) -> Triplet {
     (triplet.1, triplet.2, triplet.0 + triplet.1 - triplet.2)
 }
 
-fn random_triplet() -> MemberTriplet {
-    (random_member(), random_member(), random_member())
-}
-
-fn generate_members(initial_triplet: MemberTriplet, number_of_members: usize) {
+fn iterate(initial_triplet: Triplet, iterations: usize) {
 
     let mut triplet = initial_triplet;
 
-    for _i in 0..number_of_members {
-        triplet = get_next_member(triplet);
+    for _i in 0..iterations {
+        triplet = get_next_triplet(triplet);
     }    
 }
 
-fn complex_task(number_of_members: usize) -> Box<TaskScheduleEntry> {
+fn complex_task(iterations: usize) -> ScheduleEntry {    
 
-    let mut entry = Box::new(TaskScheduleEntry{started_at: 0u128, duration: 0u128});
+    let mut entry = ScheduleEntry{started_at: 0u128, duration: 0u128};    
 
     let clock = SystemTime::now();
-    entry.started_at = get_current_timestamp(&clock);
+    
+    entry.started_at = get_timestamp(&clock);
 
-    generate_members(random_triplet(), number_of_members);
+    iterate(random_triplet(), iterations);
 
     entry.duration = get_duration(&clock);
 
@@ -92,40 +99,44 @@ fn complex_task(number_of_members: usize) -> Box<TaskScheduleEntry> {
 
 // Performing observations
 
-fn fulfil_observation(number_of_tasks: usize, number_of_members: usize) -> u128 {
+struct Observation {
+    total_duration: u128,
+    schedule: Schedule
+}
+
+fn fulfil_observation(tasks: usize, iterations: usize) -> Observation {
+
+    let mut observation = 
+        Observation {
+            total_duration: 0u128, 
+            schedule: Vec::with_capacity(iterations-1)
+        };        
 
     let clock = SystemTime::now();
 
-    let mut handles: Vec<ScopedJoinHandle<Box<TaskScheduleEntry>>>; 
+    let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>>; 
 
-    handles = Vec::with_capacity(number_of_tasks-1);
+    handles = Vec::with_capacity(iterations-1);
 
     crossbeam::scope(|spawner| {
-            for _task_idx in 0..number_of_tasks {
-                handles.push(spawner.spawn(|| {complex_task(number_of_members)})); 
+            for _task_idx in 0..tasks {
+                handles.push(spawner.spawn(|| {complex_task(iterations)})); 
             }
         }
     );
 
-    let mut task_schedule: TaskSchedule; 
-    task_schedule = Vec::with_capacity(number_of_tasks-1);
-
     for handle in handles {
-        task_schedule.push(handle.join());
+        observation.schedule.push(handle.join());
     }
 
-    let base = task_schedule[0].started_at + 0;
+    observation.total_duration = get_duration(&clock);
 
-    for entry in task_schedule {
-        println!("Dur: {}", entry.started_at - base);
-    }
-
-    get_duration(&clock)
+    observation
 }
 
-fn measure_members_per_sec() -> usize {
+fn measure_iterations_per_sec() -> usize {
 
-    let mut members_per_sec: usize = 0;
+    let mut iterations_per_sec: usize = 0;
 
     let clock = SystemTime::now();
     let mut mills: u128 = 0;
@@ -134,11 +145,11 @@ fn measure_members_per_sec() -> usize {
 
     while mills <= 1000 {
 
-        triplet = get_next_member(triplet);
+        triplet = get_next_triplet(triplet);
         
         match clock.elapsed() {
             Ok(elapsed) => {
-                members_per_sec += 1; 
+                iterations_per_sec += 1; 
                 mills = elapsed.as_millis();
             }
             Err(e) => {
@@ -147,35 +158,24 @@ fn measure_members_per_sec() -> usize {
         }
     }
 
-    members_per_sec
+    iterations_per_sec
 }
 
-fn measure_base_duration(number_of_members: usize) -> u128 {
+fn measure_task_duration(iterations: usize) -> u128 {
 
-    let number_of_observations = 10;
+    let observations = 10;
 
     let mut total_duration: u128 = 0;
 
-    for _i in 0..number_of_observations {
-        total_duration += fulfil_observation(1, number_of_members);
+    for _i in 0..observations {
+        total_duration += fulfil_observation(1, iterations).total_duration;
     }
 
-    total_duration/number_of_observations
+    total_duration/observations
 }
 
 
-// Parsing arguments 
-
-fn validate_usize(s: &String) -> bool {   
-    Regex::new(r"^\d+$").unwrap().is_match(&s)
-}
-
-fn parse_usize(s: &String) -> usize {
-    s.parse::<usize>().unwrap()
-}
-
-
-// Printing a report
+// Formatting and printing output data
 
 fn print_report_header() {
     println!("Testing concurent code execution in Rust");
@@ -194,19 +194,23 @@ fn print_report_table_header() {
     println!("==========================================");
 }
 
-fn print_number_of_cpus(number_of_cpus: usize) {
-    println!("CPUs available {:27}", number_of_cpus);
+fn report_cpus(cpus: usize) {
+    println!("CPUs available {:27}", cpus);
 }
 
-fn print_members_per_sec(members_per_sec: usize) {
-    println!("Iterations per second {:>20}", members_per_sec.separate_with_commas());
+fn report_iterations_per_sec(iterations_per_sec: usize) {
+    println!("Iterations per second {:>20}", iterations_per_sec.separate_with_commas());
 }
+ 
+fn report_table_entry(tasks: usize, task_duration: u128, concurrent_duration: u128) -> String {
+    
+    let k = concurrent_duration as f32/task_duration as f32;
+    let total_duration = tasks as u128 * task_duration;
+    let profit = 100*(total_duration as i128 - concurrent_duration as i128)/total_duration as i128;
+    
+    println!("{:5} {:9} {:18.3} {:6}%", tasks, concurrent_duration, k, profit);
 
-fn print_report_table_entry(number_of_tasks: usize, base_duration: u128, duration: u128) {
-    let k = duration as f32/base_duration as f32;
-    let linear_duration = number_of_tasks as u128 * base_duration;
-    let profit = 100*(linear_duration as i128 - duration as i128)/linear_duration as i128;
-    println!("{:5} {:9} {:18.3} {:6}%", number_of_tasks, duration, k, profit);
+    format!("{:5}, {:9}, {:18.3}, {:6}%\n", tasks, concurrent_duration, k, profit)
 }
 
 fn print_report_table_separator() {
@@ -217,14 +221,84 @@ fn print_report_table_footer() {
     println!("==========================================");
 }
 
-fn print_args_info() {
-    println!("Requesting system parameters: no arguments are required");
-    println!("Performing observations:");
-    println!("   <Number of iterations per task> <Maximal number of tasks per CPU>");
+fn print_help() {
+    println!("Commands and arguments");
+    println!("Displaying system parameters:");
+    println!("s");
+    println!("Measuring profits of concurrency:");
+    println!("p <Maximal number of tasks per CPU> <Number of iterations per task> [Output file]");
+    println!("Measuring delays of concurrent threads:");
+    println!("d <Number of tasks per CPU> <Number of iterations per task> [Output file]");
 }
 
 
-// Performing observations and printing a report
+// Performing observations
+
+fn print_sysparams() {
+
+    let cpus = count_cpus();
+    
+    print_report_sysparams_header();
+    report_cpus(cpus);
+    let iterations_per_sec = measure_iterations_per_sec();
+    report_iterations_per_sec(iterations_per_sec);
+    print_report_table_footer();
+}
+
+fn measure_concurrent_profit(max_tasks_per_cpu: usize, iterations: usize) -> String {
+    
+    let mut out_data: String = "".to_string();
+
+    let mut tasks: usize;
+    let mut observation: Observation;
+            
+    print_report_table_header();
+
+    let cpus = count_cpus();
+
+    let task_duration = measure_task_duration(iterations);
+
+    for tasks_per_cpu in 0..max_tasks_per_cpu {
+        for cpu in 0..cpus {
+            tasks = 1 + cpu + tasks_per_cpu*cpus;
+            observation = fulfil_observation(tasks, iterations);
+            out_data += &report_table_entry(tasks, task_duration, observation.total_duration);
+        }
+
+        if tasks_per_cpu < max_tasks_per_cpu - 1 {
+            print_report_table_separator();
+        }
+    } 
+
+    print_report_table_footer();
+
+    out_data
+}
+
+fn measure_start_delays(tasks_per_cpu: usize, iterations: usize) -> String {
+        
+    let mut out_data: String = "".to_string();
+
+    let cpus = count_cpus();
+
+    let tasks = tasks_per_cpu*cpus;
+    let observation = fulfil_observation(tasks, iterations);
+
+    let mut delay: u128;
+    let mut task_no: usize;
+
+    for task in 0..observation.schedule.len() {
+        task_no = task + 1;
+        delay = observation.schedule[task].started_at - &observation.schedule[0].started_at;
+        println!("{}\t{}",task_no, delay);
+        out_data += &format!("{},{}\n", task_no, delay);
+    }
+        
+    out_data
+}
+
+
+// Accepting arguments
 
 type ArgsVec = Vec<String>;
 
@@ -236,12 +310,30 @@ enum Command {
     MeasureStartDelays
 }
 
+const ARG_IDX_COMMAND: usize = 1;
+const ARG_IDX_TASKS_PER_CPU: usize = 2;
+const ARG_IDX_ITERATIONS: usize = 3;
+const ARG_IDX_OUT_FILE_PATH: usize = 4;
+
+fn validate_usize(s: &str) -> bool {   
+    Regex::new(r"^\d+$").unwrap().is_match(&s)
+}
+
+fn parse_usize(s: &String) -> usize {
+    s.parse::<usize>().unwrap()
+}
+
+fn validate_args(args: &ArgsVec) -> bool {
+    validate_usize(&args[ARG_IDX_TASKS_PER_CPU]) && 
+    validate_usize(&args[ARG_IDX_ITERATIONS])
+}
+
 fn accept_command(args: &ArgsVec) -> Command {
 
     let mut cmd: Command = Command::Help;
 
     if args.len() > 1 {
-        match &*args[1] {
+        match &*args[ARG_IDX_COMMAND] {
             "s" => {cmd = Command::RequestSysParams;}
             "p" => {cmd = Command::MeasureConcurentProfit;}
             "d" => {cmd = Command::MeasureStartDelays;}
@@ -252,51 +344,41 @@ fn accept_command(args: &ArgsVec) -> Command {
     cmd
 }
 
-fn accept_max_number_tasks_per_cpu(args: &ArgsVec) -> usize {
-    parse_usize(&args[2])
+fn accept_tasks_per_cpu(args: &ArgsVec) -> usize {
+    println!("ARG_IDX_TASKS_PER_CPU {}", parse_usize(&args[ARG_IDX_TASKS_PER_CPU]));
+    parse_usize(&args[ARG_IDX_TASKS_PER_CPU])
 }
 
-fn accept_number_of_members(args: &ArgsVec) -> usize {
-    parse_usize(&args[3])
+fn accept_iterations(args: &ArgsVec) -> usize {
+    parse_usize(&args[ARG_IDX_ITERATIONS])
 }
 
-fn print_sysparams() {
-
-    let number_of_cpus = count_cpus();
-    
-    print_report_sysparams_header();
-    print_number_of_cpus(number_of_cpus);
-    let members_per_sec = measure_members_per_sec();
-    print_members_per_sec(members_per_sec);
-    print_report_table_footer();
+fn accept_out_file_path(args: &ArgsVec) -> &str {
+    if args.len() == ARG_IDX_OUT_FILE_PATH + 1 {
+        return &args[ARG_IDX_OUT_FILE_PATH];
+    } else {
+        return "";
+    }
 }
 
-fn validate_measure_concurent_profit_args(args: &ArgsVec) -> bool {
-    validate_usize(&args[1]) && validate_usize(&args[2])
-}
 
-fn print_concurent_profit(number_of_members: usize, max_number_tasks_per_cpu: usize) {
-    
-    let mut number_of_tasks: usize;
-    let mut duration: u128;
-            
-    print_report_table_header();
+// Doing the job 
 
-    let number_of_cpus = count_cpus();
+fn write_out_data(file_path: &str, out_data: &String) {
 
-    let base_duration = measure_base_duration(number_of_members);
+    if file_path != "" {
 
-    for number_tasks_per_cpu in 0..max_number_tasks_per_cpu {
-        for cpu in 0..number_of_cpus {
-            number_of_tasks = 1 + cpu + number_tasks_per_cpu*number_of_cpus;
-            duration = fulfil_observation(number_of_tasks, number_of_members);
-            print_report_table_entry(number_of_tasks, base_duration, duration);
+        let out_file_path = Path::new(file_path);
+
+        match File::create(out_file_path) {
+            Ok(mut out_file) => {
+                out_file.write_all(&out_data.as_bytes()).unwrap();
+            }   
+            Err(e) => {
+                panic!("Error while opening an output file: {}", e);
+            }
         }
-
-        print_report_table_separator();
     } 
-
-    print_report_table_footer();
 }
 
 fn main() {
@@ -307,78 +389,30 @@ fn main() {
 
     match accept_command(&args) {
         Command::Help => {
-            print_args_info();
+            print_help();
         }
         Command::RequestSysParams => {
             print_sysparams();
         }
         Command::MeasureConcurentProfit => {
-            if validate_measure_concurent_profit_args(&args) {
-                print_concurent_profit(
-                    accept_max_number_tasks_per_cpu(&args),
-                    accept_number_of_members(&args)
-                );
+            if validate_args(&args) {
+                let out_data = measure_concurrent_profit(
+                    accept_tasks_per_cpu(&args),
+                    accept_iterations(&args));
+                write_out_data(accept_out_file_path(&args), &out_data);
             } else {
-                print_args_info();
+                print_help();
             }
         }
         Command::MeasureStartDelays => {
-
+            if validate_args(&args) {
+                let out_data = measure_start_delays(
+                    accept_tasks_per_cpu(&args),
+                    accept_iterations(&args));
+                write_out_data(accept_out_file_path(&args), &out_data);
+            } else {
+                print_help();
+            }
         }
     }
-
-
-
-    //println!("{}", accept_command(&args));
-
-    /* if accept_command(&args) == Command::Help {
-        println!("Help");
-    } */
-
-    /*
-    let number_of_cpus = count_cpus();
-
-    if args.len() == 1 {
-        print_report_sysparams_header();
-        print_number_of_cpus(number_of_cpus);
-        let members_per_sec = measure_members_per_sec();
-        print_members_per_sec(members_per_sec);
-        print_report_table_footer();
-    } else if args.len() == 3 {
-
-        if validate_usize(&args[1]) && validate_usize(&args[2]) {
-
-            let number_of_members = parse_usize(&args[1]);
-            let max_number_tasks_per_cpu = parse_usize(&args[2]);
-
-            let mut number_of_tasks: usize;
-            let mut duration: u128;
-            
-            print_report_table_header();
-
-            let base_duration = measure_base_duration(number_of_members);
-
-            for number_tasks_per_cpu in 0..max_number_tasks_per_cpu {
-                for cpu in 0..number_of_cpus {
-                    number_of_tasks = 1 + cpu + number_tasks_per_cpu*number_of_cpus;
-                    duration = fulfil_observation(number_of_tasks, number_of_members);
-                    print_report_table_entry(number_of_tasks, base_duration, duration);
-                }
-
-                print_report_table_separator();
-            } 
-
-            number_of_tasks = number_of_cpus*10;
-            duration = fulfil_observation(number_of_tasks, number_of_members);
-            print_report_table_entry(number_of_tasks, base_duration, duration);
-
-            print_report_table_footer();
-        } else {
-            print_args_info();
-        }
-
-    } else {
-        print_args_info();
-    }
-    */
 }
