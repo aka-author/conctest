@@ -1,7 +1,7 @@
 // * * ** *** ***** ******** ************* *********************
 // Observing concurrent code execution on Rust
 //                                                   (\(\
-//                                                  =('.')=
+//                                                  =(^.^)=
 // * * ** *** ***** ******** ************* *********************
 
 use std::env;
@@ -76,7 +76,7 @@ fn iterate(initial_triplet: Triplet, iterations: usize) {
 
     let mut triplet = initial_triplet;
 
-    for _i in 0..iterations {
+    for _ in 0..iterations {
         triplet = get_next_triplet(triplet);
     }    
 }
@@ -100,16 +100,22 @@ fn complex_task(iterations: usize) -> ScheduleEntry {
 // Performing observations
 
 struct Observation {
-    total_duration: u128,
-    schedule: Schedule
+    tasks: usize,
+    absolute_concurrent_duration: u128,
+    relative_concurrent_duration: f64,
+    concurrency_profit: f64,
+    task_schedule: Schedule
 }
 
-fn fulfil_observation(tasks: usize, iterations: usize) -> Observation {
+fn fulfil_observation(tasks: usize, iterations: usize, task_duration: u128) -> Observation {
 
-    let mut observation = 
+    let mut obs = 
         Observation {
-            total_duration: 0u128, 
-            schedule: Vec::with_capacity(iterations-1)
+            tasks,
+            absolute_concurrent_duration: 0u128,
+            relative_concurrent_duration: 0f64,
+            concurrency_profit: 0f64, 
+            task_schedule: Vec::with_capacity(iterations-1)
         };        
 
     let clock = SystemTime::now();
@@ -119,19 +125,28 @@ fn fulfil_observation(tasks: usize, iterations: usize) -> Observation {
     handles = Vec::with_capacity(iterations-1);
 
     crossbeam::scope(|spawner| {
-            for _task_idx in 0..tasks {
+            for _ in 0..tasks {
                 handles.push(spawner.spawn(|| {complex_task(iterations)})); 
             }
         }
     );
 
     for handle in handles {
-        observation.schedule.push(handle.join());
+        obs.task_schedule.push(handle.join());
     }
 
-    observation.total_duration = get_duration(&clock);
+    let total_duration = (tasks as u128)*task_duration;
 
-    observation
+    obs.absolute_concurrent_duration = get_duration(&clock);
+
+    obs.relative_concurrent_duration = 
+        obs.absolute_concurrent_duration as f64/task_duration as f64;
+
+    obs.concurrency_profit = 
+        100.0*(total_duration as f64 - 
+             obs.absolute_concurrent_duration as f64)/total_duration as f64;
+
+    obs
 }
 
 fn measure_iterations_per_sec() -> usize {
@@ -168,7 +183,8 @@ fn measure_task_duration(iterations: usize) -> u128 {
     let mut total_duration: u128 = 0;
 
     for _i in 0..observations {
-        total_duration += fulfil_observation(1, iterations).total_duration;
+        total_duration += 
+            fulfil_observation(1, iterations, 1).absolute_concurrent_duration;
     }
 
     total_duration/observations
@@ -176,50 +192,6 @@ fn measure_task_duration(iterations: usize) -> u128 {
 
 
 // Formatting and printing output data
-
-fn print_report_header() {
-    println!("Testing concurent code execution in Rust");
-    println!("");
-}
-
-fn print_report_sysparams_header() {
-    println!("==========================================");
-    println!("System parameter               Value");
-    println!("==========================================");
-}
-
-fn print_report_table_header() {
-    println!("==========================================");
-    println!("Tasks  Duration  Relative duration  Profit");
-    println!("==========================================");
-}
-
-fn report_cpus(cpus: usize) {
-    println!("CPUs available {:27}", cpus);
-}
-
-fn report_iterations_per_sec(iterations_per_sec: usize) {
-    println!("Iterations per second {:>20}", iterations_per_sec.separate_with_commas());
-}
- 
-fn report_table_entry(tasks: usize, task_duration: u128, concurrent_duration: u128) -> String {
-    
-    let k = concurrent_duration as f32/task_duration as f32;
-    let total_duration = tasks as u128 * task_duration;
-    let profit = 100*(total_duration as i128 - concurrent_duration as i128)/total_duration as i128;
-    
-    println!("{:5} {:9} {:18.3} {:6}%", tasks, concurrent_duration, k, profit);
-
-    format!("{:5}, {:9}, {:18.3}, {:6}%\n", tasks, concurrent_duration, k, profit)
-}
-
-fn print_report_table_separator() {
-    println!("------------------------------------------");
-}
-
-fn print_report_table_footer() {
-    println!("==========================================");
-}
 
 fn print_help() {
     println!("Commands and arguments");
@@ -231,6 +203,57 @@ fn print_help() {
     println!("d <Number of tasks per CPU> <Number of iterations per task> [Output file]");
 }
 
+fn print_report_header() {
+    println!("Testing concurrent code execution on Rust");
+    println!("");
+}
+
+fn print_sysparams_header() {
+    println!("==========================================");
+    println!("System parameter               Value");
+    println!("==========================================");
+}
+
+fn print_cpus(cpus: usize) {
+    println!("CPUs available {:27}", cpus);
+}
+
+fn print_iterations_per_sec(iterations_per_sec: usize) {
+    println!("Iterations per second {:>20}", iterations_per_sec.separate_with_commas());
+}
+
+fn print_profit_header() {
+    println!("==========================================");
+    println!("Tasks  Duration  Relative duration  Profit");
+    println!("==========================================");
+}
+
+fn format_profit_entry(obs: &Observation) -> String {
+    
+    format!("{:5}, {:9}, {:18.3}, {:6}%\n", 
+            obs.tasks, 
+            obs.absolute_concurrent_duration, 
+            obs.relative_concurrent_duration, 
+            obs.concurrency_profit)
+}
+
+fn print_profit_entry(obs: &Observation) {
+    
+    println!("{:5} {:9} {:18.3} {:6}%", 
+             obs.tasks, 
+             obs.absolute_concurrent_duration, 
+             obs.relative_concurrent_duration, 
+             obs.concurrency_profit);
+}
+
+fn print_profit_separator() {
+    println!("------------------------------------------");
+}
+
+fn print_report_footer() {
+    println!("==========================================");
+}
+
 
 // Performing observations
 
@@ -238,21 +261,21 @@ fn print_sysparams() {
 
     let cpus = count_cpus();
     
-    print_report_sysparams_header();
-    report_cpus(cpus);
+    print_sysparams_header();
+    print_cpus(cpus);
     let iterations_per_sec = measure_iterations_per_sec();
-    report_iterations_per_sec(iterations_per_sec);
-    print_report_table_footer();
+    print_iterations_per_sec(iterations_per_sec);
+    print_report_footer();
 }
 
-fn measure_concurrent_profit(max_tasks_per_cpu: usize, iterations: usize) -> String {
+fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> String {
     
     let mut out_data: String = "".to_string();
 
     let mut tasks: usize;
-    let mut observation: Observation;
+    let mut obs: Observation;
             
-    print_report_table_header();
+    print_profit_header();
 
     let cpus = count_cpus();
 
@@ -261,16 +284,17 @@ fn measure_concurrent_profit(max_tasks_per_cpu: usize, iterations: usize) -> Str
     for tasks_per_cpu in 0..max_tasks_per_cpu {
         for cpu in 0..cpus {
             tasks = 1 + cpu + tasks_per_cpu*cpus;
-            observation = fulfil_observation(tasks, iterations);
-            out_data += &report_table_entry(tasks, task_duration, observation.total_duration);
+            obs = fulfil_observation(tasks, iterations, task_duration);
+            out_data += &format_profit_entry(&obs);
+            print_profit_entry(&obs);
         }
 
         if tasks_per_cpu < max_tasks_per_cpu - 1 {
-            print_report_table_separator();
+            print_profit_separator();
         }
     } 
 
-    print_report_table_footer();
+    print_report_footer();
 
     out_data
 }
@@ -281,15 +305,17 @@ fn measure_start_delays(tasks_per_cpu: usize, iterations: usize) -> String {
 
     let cpus = count_cpus();
 
+    let task_duration = measure_task_duration(iterations);
+
     let tasks = tasks_per_cpu*cpus;
-    let observation = fulfil_observation(tasks, iterations);
+    let obs = fulfil_observation(tasks, iterations, task_duration);
 
     let mut delay: u128;
     let mut task_no: usize;
 
-    for task in 0..observation.schedule.len() {
+    for task in 0..obs.task_schedule.len() {
         task_no = task + 1;
-        delay = observation.schedule[task].started_at - &observation.schedule[0].started_at;
+        delay = obs.task_schedule[task].started_at - &obs.task_schedule[0].started_at;
         println!("{}\t{}",task_no, delay);
         out_data += &format!("{},{}\n", task_no, delay);
     }
@@ -306,7 +332,7 @@ type ArgsVec = Vec<String>;
 enum Command {
     Help,
     RequestSysParams,
-    MeasureConcurentProfit,
+    MeasureConcurrencyProfit,
     MeasureStartDelays
 }
 
@@ -335,7 +361,7 @@ fn accept_command(args: &ArgsVec) -> Command {
     if args.len() > 1 {
         match &*args[ARG_IDX_COMMAND] {
             "s" => {cmd = Command::RequestSysParams;}
-            "p" => {cmd = Command::MeasureConcurentProfit;}
+            "p" => {cmd = Command::MeasureConcurrencyProfit;}
             "d" => {cmd = Command::MeasureStartDelays;}
             _   => {cmd = Command::Help;}
         }
@@ -394,9 +420,9 @@ fn main() {
         Command::RequestSysParams => {
             print_sysparams();
         }
-        Command::MeasureConcurentProfit => {
+        Command::MeasureConcurrencyProfit => {
             if validate_args(&args) {
-                let out_data = measure_concurrent_profit(
+                let out_data = measure_concurrency_profit(
                     accept_tasks_per_cpu(&args),
                     accept_iterations(&args));
                 write_out_data(accept_out_file_path(&args), &out_data);
