@@ -48,6 +48,14 @@ fn get_duration(clock: &SystemTime) -> u128 {
     }
 }
 
+fn delta_duration(dur1: u128, dur2: u128) -> i128 {
+    if dur1 >= dur2 {
+        return (dur1 - dur2) as i128;
+    } else {
+        return -1i128*((dur2 - dur1) as i128);
+    }
+}
+
 struct ScheduleEntry {
     started_at: u128,
     duration: u128
@@ -103,26 +111,39 @@ struct Observation {
     tasks: usize,
     absolute_concurrent_duration: u128,
     relative_concurrent_duration: f64,
-    concurrency_profit: f64,
+    concurrency_profit: i128,
     task_schedule: Schedule
 }
 
-fn fulfil_observation(tasks: usize, iterations: usize, task_duration: u128) -> Observation {
+fn mean_task_duration(obs: &Observation) -> u128 {
+
+    let tasks = obs.task_schedule.len() as u128;
+
+    let mut total_duration: u128 = 0u128;
+    
+    for entry in &obs.task_schedule {
+        total_duration += entry.duration;
+    }
+
+    total_duration/tasks        
+}
+
+fn fulfil_observation(tasks: usize, iterations: usize) -> Observation {
 
     let mut obs = 
         Observation {
             tasks,
             absolute_concurrent_duration: 0u128,
             relative_concurrent_duration: 0f64,
-            concurrency_profit: 0f64, 
+            concurrency_profit: 0i128, 
             task_schedule: Vec::with_capacity(iterations-1)
         };        
-
-    let clock = SystemTime::now();
 
     let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>>; 
 
     handles = Vec::with_capacity(iterations-1);
+
+    let clock = SystemTime::now();
 
     crossbeam::scope(|spawner| {
             for _ in 0..tasks {
@@ -131,63 +152,24 @@ fn fulfil_observation(tasks: usize, iterations: usize, task_duration: u128) -> O
         }
     );
 
+    obs.absolute_concurrent_duration = get_duration(&clock);
+
     for handle in handles {
         obs.task_schedule.push(handle.join());
     }
 
-    let total_duration = (tasks as u128)*task_duration;
+    let task_duration: u128 = mean_task_duration(&obs);
 
-    obs.absolute_concurrent_duration = get_duration(&clock);
+    let expected_total_duration: u128 = (tasks as u128)*task_duration;
 
     obs.relative_concurrent_duration = 
-        obs.absolute_concurrent_duration as f64/task_duration as f64;
+        (obs.absolute_concurrent_duration as f64)/(task_duration as f64);
 
     obs.concurrency_profit = 
-        100.0*(total_duration as f64 - 
-             obs.absolute_concurrent_duration as f64)/total_duration as f64;
+        100*delta_duration(expected_total_duration, 
+                      obs.absolute_concurrent_duration)/(expected_total_duration as i128);
 
     obs
-}
-
-fn measure_iterations_per_sec() -> usize {
-
-    let mut iterations_per_sec: usize = 0;
-
-    let clock = SystemTime::now();
-    let mut mills: u128 = 0;
-
-    let mut triplet = random_triplet();
-
-    while mills <= 1000 {
-
-        triplet = get_next_triplet(triplet);
-        
-        match clock.elapsed() {
-            Ok(elapsed) => {
-                iterations_per_sec += 1; 
-                mills = elapsed.as_millis();
-            }
-            Err(e) => {
-                panic!("Clock runtime error: {}.", e);
-            }
-        }
-    }
-
-    iterations_per_sec
-}
-
-fn measure_task_duration(iterations: usize) -> u128 {
-
-    let observations = 10;
-
-    let mut total_duration: u128 = 0;
-
-    for _i in 0..observations {
-        total_duration += 
-            fulfil_observation(1, iterations, 1).absolute_concurrent_duration;
-    }
-
-    total_duration/observations
 }
 
 
@@ -268,6 +250,33 @@ fn print_sysparams() {
     print_report_footer();
 }
 
+fn measure_iterations_per_sec() -> usize {
+
+    let mut iterations_per_sec: usize = 0;
+
+    let clock = SystemTime::now();
+    let mut mills: u128 = 0;
+
+    let mut triplet = random_triplet();
+
+    while mills <= 1000 {
+
+        triplet = get_next_triplet(triplet);
+        
+        match clock.elapsed() {
+            Ok(elapsed) => {
+                iterations_per_sec += 1; 
+                mills = elapsed.as_millis();
+            }
+            Err(e) => {
+                panic!("Clock runtime error: {}.", e);
+            }
+        }
+    }
+
+    iterations_per_sec
+}
+
 fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> String {
     
     let mut out_data: String = "".to_string();
@@ -279,12 +288,10 @@ fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> St
 
     let cpus = count_cpus();
 
-    let task_duration = measure_task_duration(iterations);
-
     for tasks_per_cpu in 0..max_tasks_per_cpu {
         for cpu in 0..cpus {
             tasks = 1 + cpu + tasks_per_cpu*cpus;
-            obs = fulfil_observation(tasks, iterations, task_duration);
+            obs = fulfil_observation(tasks, iterations);
             out_data += &format_profit_entry(&obs);
             print_profit_entry(&obs);
         }
@@ -305,10 +312,8 @@ fn measure_start_delays(tasks_per_cpu: usize, iterations: usize) -> String {
 
     let cpus = count_cpus();
 
-    let task_duration = measure_task_duration(iterations);
-
     let tasks = tasks_per_cpu*cpus;
-    let obs = fulfil_observation(tasks, iterations, task_duration);
+    let obs = fulfil_observation(tasks, iterations);
 
     let mut delay: u128;
     let mut task_no: usize;
@@ -371,7 +376,6 @@ fn accept_command(args: &ArgsVec) -> Command {
 }
 
 fn accept_tasks_per_cpu(args: &ArgsVec) -> usize {
-    println!("ARG_IDX_TASKS_PER_CPU {}", parse_usize(&args[ARG_IDX_TASKS_PER_CPU]));
     parse_usize(&args[ARG_IDX_TASKS_PER_CPU])
 }
 
