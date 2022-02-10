@@ -48,14 +48,6 @@ fn get_duration(clock: &SystemTime) -> u128 {
     }
 }
 
-fn delta_duration(dur1: u128, dur2: u128) -> i128 {
-    if dur1 >= dur2 {
-        return (dur1 - dur2) as i128;
-    } else {
-        return -1i128*((dur2 - dur1) as i128);
-    }
-}
-
 struct ScheduleEntry {
     started_at: u128,
     duration: u128
@@ -107,43 +99,98 @@ fn complex_task(iterations: usize) -> ScheduleEntry {
 
 // Performing observations
 
-struct Observation {
-    tasks: usize,
+struct ObservationOutcome {
+    mean_task_duration: u128,
     absolute_concurrent_duration: u128,
     relative_concurrent_duration: f64,
-    concurrency_profit: i128,
+    concurrency_profit: f64,
     task_schedule: Schedule
 }
 
-fn mean_task_duration(obs: &Observation) -> u128 {
-
-    let tasks = obs.task_schedule.len() as u128;
-
-    let mut total_duration: u128 = 0u128;
-    
-    for entry in &obs.task_schedule {
-        total_duration += entry.duration;
-    }
-
-    total_duration/tasks        
+fn count_tasks(oo: &ObservationOutcome) -> usize {
+    oo.task_schedule.len()
 }
 
-fn fulfil_observation(tasks: usize, iterations: usize) -> Observation {
+fn last_task(oo: &ObservationOutcome) -> usize {
+    count_tasks(oo) - 1
+}
 
-    let mut obs = 
-        Observation {
-            tasks,
+fn finished_at(entry: &ScheduleEntry) -> u128 {
+    entry.started_at + entry.duration
+}
+
+fn absolute_concurrent_duration(oo: &ObservationOutcome) -> u128 {
+
+    let mut earliest_start = oo.task_schedule[last_task(oo)].started_at;
+    let mut latest_finish= finished_at(&oo.task_schedule[last_task(oo)]); 
+    let mut finish_candidate: u128;
+
+    for entry in &oo.task_schedule {
+        
+        if earliest_start > entry.started_at {
+            earliest_start = entry.started_at;
+        }
+
+        finish_candidate = finished_at(entry);
+        if latest_finish < finish_candidate {
+            latest_finish = finish_candidate;
+        }
+    }
+
+    latest_finish - earliest_start
+}
+
+fn sum_duration(oo: &ObservationOutcome) -> u128 {
+
+    let mut sum_duration: u128 = 0u128;
+    
+    for entry in &oo.task_schedule {
+        sum_duration += entry.duration;
+    }
+
+    sum_duration    
+}
+
+fn expected_sequential_duration(oo: &ObservationOutcome) -> u128 {
+    sum_duration(oo)
+}
+
+fn mean_task_duration(oo: &ObservationOutcome) -> u128 {
+    sum_duration(oo)/oo.task_schedule.len() as u128        
+}
+
+fn relative_concurrent_duration(oo: &ObservationOutcome) -> f64 {
+    (oo.absolute_concurrent_duration as f64)/(oo.mean_task_duration as f64)
+}
+
+fn concurrency_profit(oo: &ObservationOutcome) -> f64 {
+    1.0 - oo.absolute_concurrent_duration as f64/
+          expected_sequential_duration(&oo) as f64
+}
+
+fn observation_outcome(task_schedule: Schedule) -> ObservationOutcome {
+
+    let mut oo = 
+        ObservationOutcome {
+            mean_task_duration: 0u128,
             absolute_concurrent_duration: 0u128,
             relative_concurrent_duration: 0f64,
-            concurrency_profit: 0i128, 
-            task_schedule: Vec::with_capacity(iterations-1)
-        };        
+            concurrency_profit: 0f64, 
+            task_schedule
+        };    
+    
+    oo.absolute_concurrent_duration = absolute_concurrent_duration(&oo);
+    oo.mean_task_duration = mean_task_duration(&oo);
+    oo.relative_concurrent_duration = relative_concurrent_duration(&oo);
+    oo.concurrency_profit = concurrency_profit(&oo); 
+        
+    oo    
+}
 
-    let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>>; 
+fn fulfil_observation(tasks: usize, iterations: usize) -> ObservationOutcome {
 
-    handles = Vec::with_capacity(iterations-1);
-
-    let clock = SystemTime::now();
+    let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>> = 
+                                    Vec::with_capacity(iterations-1); 
 
     crossbeam::scope(|spawner| {
             for _ in 0..tasks {
@@ -152,24 +199,12 @@ fn fulfil_observation(tasks: usize, iterations: usize) -> Observation {
         }
     );
 
-    obs.absolute_concurrent_duration = get_duration(&clock);
-
+    let mut task_schedule: Schedule = Vec::with_capacity(handles.capacity());
     for handle in handles {
-        obs.task_schedule.push(handle.join());
+        task_schedule.push(handle.join());
     }
 
-    let task_duration: u128 = mean_task_duration(&obs);
-
-    let expected_total_duration: u128 = (tasks as u128)*task_duration;
-
-    obs.relative_concurrent_duration = 
-        (obs.absolute_concurrent_duration as f64)/(task_duration as f64);
-
-    obs.concurrency_profit = 
-        100*delta_duration(expected_total_duration, 
-                      obs.absolute_concurrent_duration)/(expected_total_duration as i128);
-
-    obs
+    observation_outcome(task_schedule)
 }
 
 
@@ -205,35 +240,37 @@ fn print_iterations_per_sec(iterations_per_sec: usize) {
 }
 
 fn print_profit_header() {
-    println!("==========================================");
-    println!("Tasks  Duration  Relative duration  Profit");
-    println!("==========================================");
+    println!("==============================================================");
+    println!("Tasks  Mean task durstion  Duration  Relative duration  Profit");
+    println!("==============================================================");
 }
 
-fn format_profit_entry(obs: &Observation) -> String {
+fn format_profit_entry(oo: &ObservationOutcome) -> String {
     
-    format!("{:5}, {:9}, {:18.3}, {:6}%\n", 
-            obs.tasks, 
-            obs.absolute_concurrent_duration, 
-            obs.relative_concurrent_duration, 
-            obs.concurrency_profit)
+    format!("{:5}, {:5}, {:9}, {:18.3}, {:6}%\n", 
+            count_tasks(oo),
+            oo.mean_task_duration, 
+            oo.absolute_concurrent_duration, 
+            oo.relative_concurrent_duration, 
+            oo.concurrency_profit)
 }
 
-fn print_profit_entry(obs: &Observation) {
+fn print_profit_entry(oo: &ObservationOutcome) {
     
-    println!("{:5} {:9} {:18.3} {:6}%", 
-             obs.tasks, 
-             obs.absolute_concurrent_duration, 
-             obs.relative_concurrent_duration, 
-             obs.concurrency_profit);
+    println!("{:5} {:19} {:9} {:18.3} {:6.0}%", 
+             count_tasks(oo),
+             oo.mean_task_duration, 
+             oo.absolute_concurrent_duration, 
+             oo.relative_concurrent_duration, 
+             oo.concurrency_profit*100.0);
 }
 
 fn print_profit_separator() {
-    println!("------------------------------------------");
+    println!("--------------------------------------------------------------");
 }
 
 fn print_report_footer() {
-    println!("==========================================");
+    println!("==============================================================");
 }
 
 
@@ -282,7 +319,7 @@ fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> St
     let mut out_data: String = "".to_string();
 
     let mut tasks: usize;
-    let mut obs: Observation;
+    let mut oo: ObservationOutcome;
             
     print_profit_header();
 
@@ -291,9 +328,9 @@ fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> St
     for tasks_per_cpu in 0..max_tasks_per_cpu {
         for cpu in 0..cpus {
             tasks = 1 + cpu + tasks_per_cpu*cpus;
-            obs = fulfil_observation(tasks, iterations);
-            out_data += &format_profit_entry(&obs);
-            print_profit_entry(&obs);
+            oo = fulfil_observation(tasks, iterations);
+            out_data += &format_profit_entry(&oo);
+            print_profit_entry(&oo);
         }
 
         if tasks_per_cpu < max_tasks_per_cpu - 1 {
@@ -313,14 +350,14 @@ fn measure_start_delays(tasks_per_cpu: usize, iterations: usize) -> String {
     let cpus = count_cpus();
 
     let tasks = tasks_per_cpu*cpus;
-    let obs = fulfil_observation(tasks, iterations);
+    let oo = fulfil_observation(tasks, iterations);
 
     let mut delay: u128;
     let mut task_no: usize;
 
-    for task in 0..obs.task_schedule.len() {
+    for task in 0..count_tasks(&oo) {
         task_no = task + 1;
-        delay = obs.task_schedule[task].started_at - &obs.task_schedule[0].started_at;
+        delay = oo.task_schedule[task].started_at - &oo.task_schedule[0].started_at;
         println!("{}\t{}",task_no, delay);
         out_data += &format!("{},{}\n", task_no, delay);
     }
