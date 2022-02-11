@@ -79,10 +79,18 @@ fn get_next_triplet(triplet: Triplet) -> Triplet {
 fn iterate(initial_triplet: Triplet, iterations: usize) {
 
     let mut triplet = initial_triplet;
+    let mut triplet_sum: f64;
 
     for _ in 0..iterations {
+    
         triplet = get_next_triplet(triplet);
-    }    
+
+        triplet_sum = triplet.0 + triplet.1 + triplet.2;
+    
+        if  (3.14159265 < triplet_sum) && (triplet_sum < 3.14159266) {
+            println!("Bingo: {} + {} + {} = {}.", triplet.0, triplet.1, triplet.2, triplet_sum);
+        }
+    }   
 }
 
 fn standard_task(iterations: usize) -> ScheduleEntry {    
@@ -217,7 +225,7 @@ fn observation_outcome(task_schedule: Schedule) -> ObservationOutcome {
 
 fn fulfil_observation(tasks: usize, iterations: usize) -> ObservationOutcome {
 
-    let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>> = Vec::with_capacity(iterations); 
+    let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>> = Vec::with_capacity(tasks); 
 
     crossbeam::scope(|spawner| {
             for _ in 0..tasks {
