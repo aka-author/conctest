@@ -26,37 +26,41 @@ fn count_cpus() -> usize {
 
 // Measuring time 
 
-fn get_timestamp(clock: &SystemTime) -> u128 {
-    match clock.duration_since(SystemTime::UNIX_EPOCH) {
+type TimeMs = i128;
+type DurationMs = i128;
+type TimeCompatibleInt = i128;
+
+fn now_ms(watch: &SystemTime) -> TimeMs {
+    match watch.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(duration) => {
-            return duration.as_millis();
+            return duration.as_millis() as TimeMs;
         }
         Err(e) => {
-            panic!("Clock runtime error: {}.", e);
+            panic!("Someone stole my watch: {}!", e);
         }
     }
 }
 
-fn get_duration(clock: &SystemTime) -> u128 {
+fn duration_ms(clock: &SystemTime) -> DurationMs {
     match clock.elapsed() {
         Ok(elapsed) => {
-            return elapsed.as_millis();
+            return elapsed.as_millis() as DurationMs;
         }
         Err(e) => {
-            panic!("Clock runtime error: {}.", e);
+            panic!("Follow the White Rabbit: {}!", e);
         }
     }
 }
 
 struct ScheduleEntry {
-    started_at: u128,
-    duration: u128
+    started_at: TimeMs,
+    duration: DurationMs
 }
 
 type Schedule = Vec<ScheduleEntry>;
 
 
-// Spending time
+// Spending time with fun
 
 type Triplet = (f64, f64, f64);
 
@@ -81,28 +85,24 @@ fn iterate(initial_triplet: Triplet, iterations: usize) {
     }    
 }
 
-fn complex_task(iterations: usize) -> ScheduleEntry {    
-
-    let mut entry = ScheduleEntry{started_at: 0u128, duration: 0u128};    
-
-    let clock = SystemTime::now();
+fn standard_task(iterations: usize) -> ScheduleEntry {    
     
-    entry.started_at = get_timestamp(&clock);
+    let watch = SystemTime::now();
+    
+    let started_at= now_ms(&watch);
 
     iterate(random_triplet(), iterations);
 
-    entry.duration = get_duration(&clock);
-
-    entry
+    ScheduleEntry{started_at, duration: duration_ms(&watch)}
 }
 
 
 // Performing observations
 
 struct ObservationOutcome {
-    mean_task_duration: u128,
-    absolute_concurrent_duration: u128,
-    relative_concurrent_duration: f64,
+    mean_task_duration: DurationMs,
+    standard_deviation: DurationMs,
+    total_duration: DurationMs,
     concurrency_profit: f64,
     task_schedule: Schedule
 }
@@ -115,34 +115,46 @@ fn last_task(oo: &ObservationOutcome) -> usize {
     count_tasks(oo) - 1
 }
 
-fn finished_at(entry: &ScheduleEntry) -> u128 {
+fn finished_at(entry: &ScheduleEntry) -> TimeMs {
     entry.started_at + entry.duration
 }
 
-fn absolute_concurrent_duration(oo: &ObservationOutcome) -> u128 {
+fn earliest_start(oo: &ObservationOutcome) -> TimeMs {
+    
+    let mut es: TimeMs = oo.task_schedule[0].started_at;
 
-    let mut earliest_start = oo.task_schedule[last_task(oo)].started_at;
-    let mut latest_finish= finished_at(&oo.task_schedule[last_task(oo)]); 
-    let mut finish_candidate: u128;
-
-    for entry in &oo.task_schedule {
-        
-        if earliest_start > entry.started_at {
-            earliest_start = entry.started_at;
+    for entry in &oo.task_schedule {  
+        if es > entry.started_at {
+            es = entry.started_at;
         }
-
-        finish_candidate = finished_at(entry);
-        if latest_finish < finish_candidate {
-            latest_finish = finish_candidate;
-        }
-    }
-
-    latest_finish - earliest_start
+    }    
+    
+    es    
 }
 
-fn sum_duration(oo: &ObservationOutcome) -> u128 {
+fn latest_finish(oo: &ObservationOutcome) -> TimeMs {
 
-    let mut sum_duration: u128 = 0u128;
+    let mut lf: TimeMs = finished_at(&oo.task_schedule[last_task(oo)]);
+
+    let mut candidate: TimeMs;
+
+    for entry in &oo.task_schedule {
+        candidate = finished_at(entry);
+        if lf < candidate {
+            lf = candidate;
+        } 
+    }
+    
+    lf
+}
+
+fn total_duration(oo: &ObservationOutcome) -> DurationMs {
+    (latest_finish(oo) - earliest_start(oo)) as DurationMs
+}
+
+fn sum_duration(oo: &ObservationOutcome) -> DurationMs {
+
+    let mut sum_duration: DurationMs = 0;
     
     for entry in &oo.task_schedule {
         sum_duration += entry.duration;
@@ -151,50 +163,65 @@ fn sum_duration(oo: &ObservationOutcome) -> u128 {
     sum_duration    
 }
 
-fn expected_sequential_duration(oo: &ObservationOutcome) -> u128 {
-    sum_duration(oo)
+fn mean_task_duration(oo: &ObservationOutcome) -> DurationMs {
+    sum_duration(oo)/(count_tasks(oo) as TimeCompatibleInt)       
 }
 
-fn mean_task_duration(oo: &ObservationOutcome) -> u128 {
-    sum_duration(oo)/oo.task_schedule.len() as u128        
+fn standard_deviation(oo: &ObservationOutcome) -> DurationMs {
+
+    let mut dispersion: DurationMs = 0;
+    let mut deviation: DurationMs;
+
+    for entry in &oo.task_schedule {
+        deviation = oo.mean_task_duration - entry.duration;
+        dispersion += deviation*deviation;
+    }
+
+    ((dispersion as f64).sqrt()/(count_tasks(oo) as f64 - 1.0)) as DurationMs       
 }
 
-fn relative_concurrent_duration(oo: &ObservationOutcome) -> f64 {
-    (oo.absolute_concurrent_duration as f64)/(oo.mean_task_duration as f64)
-}
-
-fn concurrency_profit(oo: &ObservationOutcome) -> f64 {
-    1.0 - oo.absolute_concurrent_duration as f64/
-          expected_sequential_duration(&oo) as f64
+fn concurrency_profit(oo: &ObservationOutcome, report: &Report) -> f64 {
+    if report.len() == 0 {
+        return 0.0;
+    } else {
+        let min_task_duration = report[0].total_duration;
+        let queue_total_duration = 
+            (count_tasks(oo) as TimeCompatibleInt)*min_task_duration;
+        return 1.0 - 
+            (oo.total_duration as f64)/(queue_total_duration as f64); 
+    }
 }
 
 fn observation_outcome(task_schedule: Schedule) -> ObservationOutcome {
 
     let mut oo = 
         ObservationOutcome {
-            mean_task_duration: 0u128,
-            absolute_concurrent_duration: 0u128,
-            relative_concurrent_duration: 0f64,
+            mean_task_duration: 0,
+            standard_deviation: 0,
+            total_duration: 0,
             concurrency_profit: 0f64, 
             task_schedule
         };    
-    
-    oo.absolute_concurrent_duration = absolute_concurrent_duration(&oo);
+        
+    oo.total_duration = total_duration(&oo);
     oo.mean_task_duration = mean_task_duration(&oo);
-    oo.relative_concurrent_duration = relative_concurrent_duration(&oo);
-    oo.concurrency_profit = concurrency_profit(&oo); 
+    oo.standard_deviation = standard_deviation(&oo);
+
+    let earliest_start: TimeMs = earliest_start(&oo);
+    for i in 0..oo.task_schedule.len() {
+        oo.task_schedule[i].started_at -= earliest_start;
+    }
         
     oo    
 }
 
 fn fulfil_observation(tasks: usize, iterations: usize) -> ObservationOutcome {
 
-    let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>> = 
-                                    Vec::with_capacity(iterations-1); 
+    let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>> = Vec::with_capacity(iterations); 
 
     crossbeam::scope(|spawner| {
             for _ in 0..tasks {
-                handles.push(spawner.spawn(|| {complex_task(iterations)})); 
+                handles.push(spawner.spawn(|| {standard_task(iterations)})); 
             }
         }
     );
@@ -208,16 +235,14 @@ fn fulfil_observation(tasks: usize, iterations: usize) -> ObservationOutcome {
 }
 
 
-// Formatting and printing output data
+// Printing messages
 
 fn print_help() {
     println!("Commands and arguments");
     println!("Displaying system parameters:");
     println!("s");
     println!("Measuring profits of concurrency:");
-    println!("p <Maximal number of tasks per CPU> <Number of iterations per task> [Output file]");
-    println!("Measuring delays of concurrent threads:");
-    println!("d <Number of tasks per CPU> <Number of iterations per task> [Output file]");
+    println!("p <Tasks per CPU> <Iterations per task> [Output file]");
 }
 
 fn print_report_header() {
@@ -226,9 +251,9 @@ fn print_report_header() {
 }
 
 fn print_sysparams_header() {
-    println!("==========================================");
+    println!("============================================================");
     println!("System parameter               Value");
-    println!("==========================================");
+    println!("============================================================");
 }
 
 fn print_cpus(cpus: usize) {
@@ -240,37 +265,122 @@ fn print_iterations_per_sec(iterations_per_sec: usize) {
 }
 
 fn print_profit_header() {
-    println!("==============================================================");
-    println!("Tasks  Mean task durstion  Duration  Relative duration  Profit");
-    println!("==============================================================");
-}
-
-fn format_profit_entry(oo: &ObservationOutcome) -> String {
-    
-    format!("{:5}, {:5}, {:9}, {:18.3}, {:6}%\n", 
-            count_tasks(oo),
-            oo.mean_task_duration, 
-            oo.absolute_concurrent_duration, 
-            oo.relative_concurrent_duration, 
-            oo.concurrency_profit)
-}
-
-fn print_profit_entry(oo: &ObservationOutcome) {
-    
-    println!("{:5} {:19} {:9} {:18.3} {:6.0}%", 
-             count_tasks(oo),
-             oo.mean_task_duration, 
-             oo.absolute_concurrent_duration, 
-             oo.relative_concurrent_duration, 
-             oo.concurrency_profit*100.0);
+    println!("============================================================");
+    println!("Tasks  Mean task duration  Std. dev.  Total duration  Profit");
+    println!("============================================================");
 }
 
 fn print_profit_separator() {
-    println!("--------------------------------------------------------------");
+    println!("------------------------------------------------------------");
 }
 
 fn print_report_footer() {
-    println!("==============================================================");
+    println!("============================================================");
+}
+
+fn print_profit_entry(oo: &ObservationOutcome) {
+    println!("{:5} {:19} {:10} {:15} {:6.0}%", 
+             count_tasks(oo),
+             oo.mean_task_duration,
+             oo.standard_deviation, 
+             oo.total_duration, 
+             oo.concurrency_profit*100.0);
+}
+
+
+// Formatting and saving a report
+
+fn format_observation_totals_section_header() -> String {
+    "Tasks,Mean task duration,Std. dev.,Total duration,Profit\n".to_string()
+}
+
+fn format_observation_totals(oo: &ObservationOutcome) -> String {
+    format!("{}, {}, {}, {}, {:.0}%\n", 
+            count_tasks(oo),
+            oo.mean_task_duration,
+            oo.standard_deviation,
+            oo.total_duration, 
+            100.0*oo.concurrency_profit)
+}
+
+fn format_observation_totals_section_data(report: &Report) -> String {
+
+    let mut formatted_data: String = "".to_string();
+
+    for oo in report {
+        formatted_data += &format_observation_totals(oo);
+    }
+
+    formatted_data
+} 
+
+fn format_observation_totals_section(report: &Report) -> String {
+    format_observation_totals_section_header() + 
+    &format_observation_totals_section_data(&report)
+}
+
+fn format_observation_schedule_entry(tasks: usize, 
+                                     task: usize, 
+                                     entry: &ScheduleEntry) -> String {
+    format!("{},{},{},{},{}\n", 
+            tasks,
+            task, 
+            entry.started_at, 
+            finished_at(entry), 
+            entry.duration)
+}
+
+fn format_observation_schedule(oo: &ObservationOutcome) -> String {
+
+    let mut schedule_text: String = "".to_string();
+
+    let tasks: usize = count_tasks(&oo);
+    let mut task: usize = 1;
+
+    for entry in &oo.task_schedule {
+        schedule_text += &format_observation_schedule_entry(tasks, task, entry);
+        task += 1;
+    }
+
+    schedule_text
+}
+
+fn format_observation_schedule_header() -> String {
+    "Tasks,Task,Started,Finished,Duration\n".to_string()
+}
+
+fn format_observation_schedules_section(report: &Report) -> String {
+
+    let mut section_text: String = format_observation_schedule_header();
+    
+    for oo in report {
+        section_text += &format_observation_schedule(oo);
+    }
+
+    section_text
+}
+
+fn format_report(report: &Report) -> String {
+    format_observation_totals_section(&report) +
+    "\n" + 
+    &format_observation_schedules_section(&report)
+}
+
+fn save_text(file_path: &str, text: &String) {
+
+    if file_path != "" {
+
+        let out_file_path = Path::new(file_path);
+
+        match File::create(out_file_path) {
+            Ok(mut out_file) => {
+                out_file.write_all(&text.as_bytes()).unwrap();
+            }   
+            Err(e) => {
+                panic!("Error while opening an output file: {}", e);
+            }
+        }
+    } 
 }
 
 
@@ -291,46 +401,42 @@ fn measure_iterations_per_sec() -> usize {
 
     let mut iterations_per_sec: usize = 0;
 
-    let clock = SystemTime::now();
-    let mut mills: u128 = 0;
+    let watch = SystemTime::now();
+    let mut millis: TimeMs = 0;
 
     let mut triplet = random_triplet();
 
-    while mills <= 1000 {
-
+    while millis <= 1000 {
+        iterations_per_sec += 1;
         triplet = get_next_triplet(triplet);
-        
-        match clock.elapsed() {
-            Ok(elapsed) => {
-                iterations_per_sec += 1; 
-                mills = elapsed.as_millis();
-            }
-            Err(e) => {
-                panic!("Clock runtime error: {}.", e);
-            }
-        }
+        millis = duration_ms(&watch);
     }
 
     iterations_per_sec
 }
 
-fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> String {
-    
-    let mut out_data: String = "".to_string();
+type Report = Vec<ObservationOutcome>;
 
+fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> Report {
+    
     let mut tasks: usize;
+
     let mut oo: ObservationOutcome;
-            
-    print_profit_header();
 
     let cpus = count_cpus();
 
+    let mut report: Report = Vec::with_capacity(cpus*max_tasks_per_cpu);
+            
+    print_profit_header();
+
     for tasks_per_cpu in 0..max_tasks_per_cpu {
+
         for cpu in 0..cpus {
             tasks = 1 + cpu + tasks_per_cpu*cpus;
             oo = fulfil_observation(tasks, iterations);
-            out_data += &format_profit_entry(&oo);
+            oo.concurrency_profit = concurrency_profit(&oo, &report);
             print_profit_entry(&oo);
+            report.push(oo);
         }
 
         if tasks_per_cpu < max_tasks_per_cpu - 1 {
@@ -340,29 +446,7 @@ fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> St
 
     print_report_footer();
 
-    out_data
-}
-
-fn measure_start_delays(tasks_per_cpu: usize, iterations: usize) -> String {
-        
-    let mut out_data: String = "".to_string();
-
-    let cpus = count_cpus();
-
-    let tasks = tasks_per_cpu*cpus;
-    let oo = fulfil_observation(tasks, iterations);
-
-    let mut delay: u128;
-    let mut task_no: usize;
-
-    for task in 0..count_tasks(&oo) {
-        task_no = task + 1;
-        delay = oo.task_schedule[task].started_at - &oo.task_schedule[0].started_at;
-        println!("{}\t{}",task_no, delay);
-        out_data += &format!("{},{}\n", task_no, delay);
-    }
-        
-    out_data
+    report
 }
 
 
@@ -375,7 +459,6 @@ enum Command {
     Help,
     RequestSysParams,
     MeasureConcurrencyProfit,
-    MeasureStartDelays
 }
 
 const ARG_IDX_COMMAND: usize = 1;
@@ -404,7 +487,6 @@ fn accept_command(args: &ArgsVec) -> Command {
         match &*args[ARG_IDX_COMMAND] {
             "s" => {cmd = Command::RequestSysParams;}
             "p" => {cmd = Command::MeasureConcurrencyProfit;}
-            "d" => {cmd = Command::MeasureStartDelays;}
             _   => {cmd = Command::Help;}
         }
     } 
@@ -431,23 +513,6 @@ fn accept_out_file_path(args: &ArgsVec) -> &str {
 
 // Doing the job 
 
-fn write_out_data(file_path: &str, out_data: &String) {
-
-    if file_path != "" {
-
-        let out_file_path = Path::new(file_path);
-
-        match File::create(out_file_path) {
-            Ok(mut out_file) => {
-                out_file.write_all(&out_data.as_bytes()).unwrap();
-            }   
-            Err(e) => {
-                panic!("Error while opening an output file: {}", e);
-            }
-        }
-    } 
-}
-
 fn main() {
 
     print_report_header();
@@ -463,20 +528,10 @@ fn main() {
         }
         Command::MeasureConcurrencyProfit => {
             if validate_args(&args) {
-                let out_data = measure_concurrency_profit(
+                let report = measure_concurrency_profit(
                     accept_tasks_per_cpu(&args),
                     accept_iterations(&args));
-                write_out_data(accept_out_file_path(&args), &out_data);
-            } else {
-                print_help();
-            }
-        }
-        Command::MeasureStartDelays => {
-            if validate_args(&args) {
-                let out_data = measure_start_delays(
-                    accept_tasks_per_cpu(&args),
-                    accept_iterations(&args));
-                write_out_data(accept_out_file_path(&args), &out_data);
+                save_text(accept_out_file_path(&args), &format_report(&report));
             } else {
                 print_help();
             }
