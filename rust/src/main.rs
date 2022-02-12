@@ -17,17 +17,9 @@ use std::fs::File;
 use std::io::Write;
 
 
-// Retrieving system parameters
-
-fn count_cpus() -> usize {
-    num_cpus::get()
-}
-
-
-// Measuring time 
+// Measuring time and working with schedules
 
 type TimeMs = i128;
-type DurationMs = i128;
 type TimeCompatibleInt = i128;
 
 fn now_ms(watch: &SystemTime) -> TimeMs {
@@ -41,10 +33,10 @@ fn now_ms(watch: &SystemTime) -> TimeMs {
     }
 }
 
-fn duration_ms(clock: &SystemTime) -> DurationMs {
+fn duration_ms(clock: &SystemTime) -> TimeMs {
     match clock.elapsed() {
         Ok(elapsed) => {
-            return elapsed.as_millis() as DurationMs;
+            return elapsed.as_millis() as TimeMs;
         }
         Err(e) => {
             panic!("Follow the White Rabbit: {}!", e);
@@ -54,10 +46,50 @@ fn duration_ms(clock: &SystemTime) -> DurationMs {
 
 struct ScheduleEntry {
     started_at: TimeMs,
-    duration: DurationMs
+    duration: TimeMs
+}
+
+impl ScheduleEntry {
+
+    fn create_sd(started_at: TimeMs, duration: TimeMs) -> ScheduleEntry {
+        ScheduleEntry{started_at, duration}
+    }
+
+    fn get_started_at(self: &Self) -> TimeMs {
+        self.started_at
+    }
+
+    fn recalc_start_from(self: &mut Self, initial_moment: TimeMs) {
+        self.started_at -= initial_moment
+    }
+
+    fn get_finished_at(self: &Self) -> TimeMs {
+        self.started_at + self.duration
+    }
+    
+    fn get_duration(self: &Self) -> TimeMs {
+        self.duration
+    }
 }
 
 type Schedule = Vec<ScheduleEntry>;
+
+/*
+impl Schedule {
+
+    fn add_entry(self: &mut Self, started_at: TimeMs, duration: TimeMs) {
+        self.push(ScheduleEntry{started_at, duration});    
+    }
+
+    fn earliest_start(self: &Self) -> TimeMs {
+
+    }
+
+    fn latest_finish(self: &Self) -> TimeMs {
+        
+    }
+
+}*/
 
 
 // Spending time with fun
@@ -73,81 +105,87 @@ fn random_triplet() -> Triplet {
 }
 
 fn get_next_triplet(triplet: Triplet) -> Triplet {
-    (triplet.1, triplet.2, triplet.0 + triplet.1 - triplet.2)
+
+    let mut next_member = triplet.0 + triplet.1 - triplet.2;
+
+    if next_member.abs() > 1.0 {
+        next_member = 1.0/next_member;
+    }
+
+    (triplet.1, triplet.2, next_member)
 }
 
-fn iterate(initial_triplet: Triplet, iterations: usize) {
+fn is_bingo(member: f64) -> bool {
+    -0.00000000000001 < member && member < 0.00000000000001
+}
+
+fn iterate(initial_triplet: Triplet, cycles: usize) -> f64 {
 
     let mut triplet = initial_triplet;
-    let mut triplet_sum: f64;
-
-    for _ in 0..iterations {
+    
+    for step in 0..cycles {
     
         triplet = get_next_triplet(triplet);
 
-        triplet_sum = triplet.0 + triplet.1 + triplet.2;
-    
-        if  (3.14159265 < triplet_sum) && (triplet_sum < 3.14159266) {
-            println!("Bingo: {} + {} + {} = {}.", triplet.0, triplet.1, triplet.2, triplet_sum);
+        if is_bingo(triplet.2) {
+            print_bingo(initial_triplet, step, triplet.2);
         }
-    }   
+    }    
+
+    triplet.2
 }
 
-fn standard_task(iterations: usize) -> ScheduleEntry {    
+fn standard_task(cycles: usize) -> ScheduleEntry {    
     
     let watch = SystemTime::now();
     
     let started_at= now_ms(&watch);
 
-    iterate(random_triplet(), iterations);
+    iterate(random_triplet(), cycles);
 
-    ScheduleEntry{started_at, duration: duration_ms(&watch)}
+    ScheduleEntry::create_sd(started_at, duration_ms(&watch))
 }
 
 
 // Performing observations
 
-struct ObservationOutcome {
-    mean_task_duration: DurationMs,
-    standard_deviation: DurationMs,
-    total_duration: DurationMs,
+struct Observation {
+    mean_task_duration: TimeMs,
+    standard_deviation: TimeMs,
+    total_duration: TimeMs,
     concurrency_profit: f64,
     task_schedule: Schedule
 }
 
-fn count_tasks(oo: &ObservationOutcome) -> usize {
+fn count_tasks(oo: &Observation) -> usize {
     oo.task_schedule.len()
 }
 
-fn last_task(oo: &ObservationOutcome) -> usize {
+fn last_task(oo: &Observation) -> usize {
     count_tasks(oo) - 1
 }
 
-fn finished_at(entry: &ScheduleEntry) -> TimeMs {
-    entry.started_at + entry.duration
-}
-
-fn earliest_start(oo: &ObservationOutcome) -> TimeMs {
+fn earliest_start(oo: &Observation) -> TimeMs {
     
-    let mut es: TimeMs = oo.task_schedule[0].started_at;
+    let mut es: TimeMs = oo.task_schedule[0].get_started_at();
 
     for entry in &oo.task_schedule {  
-        if es > entry.started_at {
-            es = entry.started_at;
+        if es > entry.get_started_at() {
+            es = entry.get_started_at();
         }
     }    
     
     es    
 }
 
-fn latest_finish(oo: &ObservationOutcome) -> TimeMs {
+fn latest_finish(oo: &Observation) -> TimeMs {
 
-    let mut lf: TimeMs = finished_at(&oo.task_schedule[last_task(oo)]);
+    let mut lf: TimeMs = oo.task_schedule[last_task(oo)].get_finished_at();
 
     let mut candidate: TimeMs;
 
     for entry in &oo.task_schedule {
-        candidate = finished_at(entry);
+        candidate = entry.get_finished_at();
         if lf < candidate {
             lf = candidate;
         } 
@@ -156,39 +194,39 @@ fn latest_finish(oo: &ObservationOutcome) -> TimeMs {
     lf
 }
 
-fn total_duration(oo: &ObservationOutcome) -> DurationMs {
-    (latest_finish(oo) - earliest_start(oo)) as DurationMs
+fn total_duration(oo: &Observation) -> TimeMs {
+    (latest_finish(oo) - earliest_start(oo)) as TimeMs
 }
 
-fn sum_duration(oo: &ObservationOutcome) -> DurationMs {
+fn sum_duration(oo: &Observation) -> TimeMs {
 
-    let mut sum_duration: DurationMs = 0;
+    let mut sum_duration: TimeMs = 0;
     
     for entry in &oo.task_schedule {
-        sum_duration += entry.duration;
+        sum_duration += entry.get_duration();
     }
 
     sum_duration    
 }
 
-fn mean_task_duration(oo: &ObservationOutcome) -> DurationMs {
+fn mean_task_duration(oo: &Observation) -> TimeMs {
     sum_duration(oo)/(count_tasks(oo) as TimeCompatibleInt)       
 }
 
-fn standard_deviation(oo: &ObservationOutcome) -> DurationMs {
+fn standard_deviation(oo: &Observation) -> TimeMs {
 
-    let mut dispersion: DurationMs = 0;
-    let mut deviation: DurationMs;
+    let mut dispersion: TimeMs = 0;
+    let mut deviation: TimeMs;
 
     for entry in &oo.task_schedule {
-        deviation = oo.mean_task_duration - entry.duration;
+        deviation = oo.mean_task_duration - entry.get_duration();
         dispersion += deviation*deviation;
     }
 
-    ((dispersion as f64).sqrt()/(count_tasks(oo) as f64 - 1.0)) as DurationMs       
+    ((dispersion as f64).sqrt()/(count_tasks(oo) as f64 - 1.0)) as TimeMs       
 }
 
-fn concurrency_profit(oo: &ObservationOutcome, report: &Report) -> f64 {
+fn concurrency_profit(oo: &Observation, report: &Report) -> f64 {
     if report.len() == 0 {
         return 0.0;
     } else {
@@ -200,10 +238,10 @@ fn concurrency_profit(oo: &ObservationOutcome, report: &Report) -> f64 {
     }
 }
 
-fn observation_outcome(task_schedule: Schedule) -> ObservationOutcome {
+fn observation(task_schedule: Schedule) -> Observation {
 
     let mut oo = 
-        ObservationOutcome {
+        Observation {
             mean_task_duration: 0,
             standard_deviation: 0,
             total_duration: 0,
@@ -217,59 +255,99 @@ fn observation_outcome(task_schedule: Schedule) -> ObservationOutcome {
 
     let earliest_start: TimeMs = earliest_start(&oo);
     for i in 0..oo.task_schedule.len() {
-        oo.task_schedule[i].started_at -= earliest_start;
+        oo.task_schedule[i].recalc_start_from(earliest_start);
     }
         
     oo    
 }
 
-fn fulfil_observation(tasks: usize, iterations: usize) -> ObservationOutcome {
+fn count_series(tasks: usize, series_size: usize) -> usize {
+    if tasks % series_size == 0 {
+        return tasks/series_size;
+    } else {
+        return tasks/series_size + 1;
+    }
+}
 
+fn observe(tasks: usize, cycles: usize, series_size: usize) -> Observation {
+
+    let series = count_series(tasks, series_size);
+    let mut count_tasks_total = 0usize;
+    let mut count_tasks_series = 0usize;
     let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>> = Vec::with_capacity(tasks); 
 
-    crossbeam::scope(|spawner| {
-            for _ in 0..tasks {
-                handles.push(spawner.spawn(|| {standard_task(iterations)})); 
+    for _ in 0..series { 
+        crossbeam::scope(|spawner| {
+            count_tasks_series = 0;
+            while count_tasks_total < tasks && count_tasks_series < series_size {
+                handles.push(spawner.spawn(|| {standard_task(cycles)}));
+                count_tasks_series += 1;
+                count_tasks_total += 1;
             }
-        }
-    );
+        });
+    }
 
     let mut task_schedule: Schedule = Vec::with_capacity(handles.capacity());
     for handle in handles {
         task_schedule.push(handle.join());
     }
 
-    observation_outcome(task_schedule)
+    observation(task_schedule)
 }
 
 
-// Printing messages
+// Getting parameters of the current system
+
+fn count_cpus() -> usize {
+    num_cpus::get()
+}
+
+fn count_cycles_per_sec() -> usize {
+
+    let mut duration: TimeMs = 0;    
+    let mut cycles: usize = 1; 
+
+    while duration < 1000 {
+        cycles *= 10;
+        let watch = SystemTime::now();
+        iterate(random_triplet(), cycles);
+        duration = duration_ms(&watch);
+    }
+
+    (1000*cycles as TimeCompatibleInt/duration) as usize
+}
+
+
+// Printing messages to a console
+
+fn print_salutation() {
+    println!("Testing concurrent code execution on Rust\n");
+}
 
 fn print_help() {
     println!("Commands and arguments");
     println!("Displaying system parameters:");
     println!("s");
     println!("Measuring profits of concurrency:");
-    println!("p <Tasks per CPU> <Iterations per task> [Output file]");
-}
-
-fn print_report_header() {
-    println!("Testing concurrent code execution on Rust");
-    println!("");
+    println!("p <Number of tasks> <Cycles in a task> <Tasks in a series> [Output file]");
 }
 
 fn print_sysparams_header() {
-    println!("============================================================");
+    println!("====================================");
     println!("System parameter               Value");
-    println!("============================================================");
+    println!("====================================");
 }
 
 fn print_cpus(cpus: usize) {
-    println!("CPUs available {:27}", cpus);
+    println!("CPUs available {:21}", cpus);
 }
 
-fn print_iterations_per_sec(iterations_per_sec: usize) {
-    println!("Iterations per second {:>20}", iterations_per_sec.separate_with_commas());
+fn print_cycles_per_sec(cycles_per_sec: usize) {
+    println!("Cycles per second {:>18}", cycles_per_sec.separate_with_commas());
+}
+
+fn print_sysparams_footer() {
+    println!("====================================");
 }
 
 fn print_profit_header() {
@@ -278,21 +356,30 @@ fn print_profit_header() {
     println!("============================================================");
 }
 
-fn print_profit_separator() {
-    println!("------------------------------------------------------------");
-}
-
-fn print_report_footer() {
-    println!("============================================================");
-}
-
-fn print_profit_entry(oo: &ObservationOutcome) {
+fn print_profit_entry(oo: &Observation) {
     println!("{:5} {:19} {:10} {:15} {:6.0}%", 
              count_tasks(oo),
              oo.mean_task_duration,
              oo.standard_deviation, 
              oo.total_duration, 
              oo.concurrency_profit*100.0);
+}
+
+fn print_bingo(initial_triplet: Triplet, step: usize, member: f64) {
+    println!("Bingo: {}, {}, and {} give {} on step {}.", 
+             initial_triplet.0, 
+             initial_triplet.1, 
+             initial_triplet.2, 
+             member, 
+             step.separate_with_commas());
+}
+
+fn print_profit_separator() {
+    println!("------------------------------------------------------------");
+}
+
+fn print_profit_footer() {
+    println!("============================================================");
 }
 
 
@@ -302,7 +389,7 @@ fn format_observation_totals_section_header() -> String {
     "Tasks,Mean task duration,Std. dev.,Total duration,Profit\n".to_string()
 }
 
-fn format_observation_totals(oo: &ObservationOutcome) -> String {
+fn format_observation_totals(oo: &Observation) -> String {
     format!("{}, {}, {}, {}, {:.0}%\n", 
             count_tasks(oo),
             oo.mean_task_duration,
@@ -333,12 +420,12 @@ fn format_observation_schedule_entry(tasks: usize,
     format!("{},{},{},{},{}\n", 
             tasks,
             task, 
-            entry.started_at, 
-            finished_at(entry), 
-            entry.duration)
+            entry.get_started_at(), 
+            entry.get_finished_at(), 
+            entry.get_duration())
 }
 
-fn format_observation_schedule(oo: &ObservationOutcome) -> String {
+fn format_observation_schedule(oo: &Observation) -> String {
 
     let mut schedule_text: String = "".to_string();
 
@@ -374,13 +461,10 @@ fn format_report(report: &Report) -> String {
     &format_observation_schedules_section(&report)
 }
 
-fn save_text(file_path: &str, text: &String) {
+fn save_text(out_file_path: &str, text: &String) {
 
-    if file_path != "" {
-
-        let out_file_path = Path::new(file_path);
-
-        match File::create(out_file_path) {
+    if out_file_path != "" {
+        match File::create(Path::new(out_file_path)) {
             Ok(mut out_file) => {
                 out_file.write_all(&text.as_bytes()).unwrap();
             }   
@@ -394,65 +478,37 @@ fn save_text(file_path: &str, text: &String) {
 
 // Performing observations
 
-fn print_sysparams() {
-
-    let cpus = count_cpus();
-    
+fn test_sysparams() {
     print_sysparams_header();
-    print_cpus(cpus);
-    let iterations_per_sec = measure_iterations_per_sec();
-    print_iterations_per_sec(iterations_per_sec);
-    print_report_footer();
+    print_cpus(count_cpus());
+    print_cycles_per_sec(count_cycles_per_sec());
+    print_sysparams_footer();
 }
 
-fn measure_iterations_per_sec() -> usize {
+type Report = Vec<Observation>;
 
-    let mut iterations_per_sec: usize = 0;
-
-    let watch = SystemTime::now();
-    let mut millis: TimeMs = 0;
-
-    let mut triplet = random_triplet();
-
-    while millis <= 1000 {
-        iterations_per_sec += 1;
-        triplet = get_next_triplet(triplet);
-        millis = duration_ms(&watch);
-    }
-
-    iterations_per_sec
-}
-
-type Report = Vec<ObservationOutcome>;
-
-fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> Report {
+fn test_concurrency_profit(tasks_max: usize, cycles: usize, series_size: usize) -> Report {
     
-    let mut tasks: usize;
+    let mut report: Report = Vec::with_capacity(tasks_max);
 
-    let mut oo: ObservationOutcome;
-
-    let cpus = count_cpus();
-
-    let mut report: Report = Vec::with_capacity(cpus*max_tasks_per_cpu);
-            
     print_profit_header();
 
-    for tasks_per_cpu in 0..max_tasks_per_cpu {
+    let mut oo: Observation;
 
-        for cpu in 0..cpus {
-            tasks = 1 + cpu + tasks_per_cpu*cpus;
-            oo = fulfil_observation(tasks, iterations);
-            oo.concurrency_profit = concurrency_profit(&oo, &report);
-            print_profit_entry(&oo);
-            report.push(oo);
-        }
+    for tasks in 1..tasks_max + 1 {
 
-        if tasks_per_cpu < max_tasks_per_cpu - 1 {
+        oo = observe(tasks, cycles, series_size);
+        oo.concurrency_profit = concurrency_profit(&oo, &report);
+        
+        print_profit_entry(&oo);
+        if tasks % count_cpus() == 0 && tasks != tasks_max {
             print_profit_separator();
         }
+
+        report.push(oo);
     } 
 
-    print_report_footer();
+    print_profit_footer();
 
     report
 }
@@ -460,9 +516,21 @@ fn measure_concurrency_profit(max_tasks_per_cpu: usize, iterations: usize) -> Re
 
 // Accepting arguments
 
+fn validate_usize(s: &str) -> bool {   
+    Regex::new(r"^\d+$").unwrap().is_match(&s)
+}
+
+fn parse_usize(s: &String) -> usize {
+    if validate_usize(s) {
+        return s.parse::<usize>().unwrap();
+    } else {
+        return 0;
+    }    
+}
+
 type ArgsVec = Vec<String>;
 
-#[derive(PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 enum Command {
     Help,
     RequestSysParams,
@@ -470,52 +538,105 @@ enum Command {
 }
 
 const ARG_IDX_COMMAND: usize = 1;
-const ARG_IDX_TASKS_PER_CPU: usize = 2;
-const ARG_IDX_ITERATIONS: usize = 3;
-const ARG_IDX_OUT_FILE_PATH: usize = 4;
+const ARG_IDX_TASKS: usize = 2;
+const ARG_IDX_CYCLES: usize = 3;
+const ARG_IDX_SERIES_SIZE: usize = 4;
+//const ARG_IDX_OUT_FILE_PATH: usize = 5;
 
-fn validate_usize(s: &str) -> bool {   
-    Regex::new(r"^\d+$").unwrap().is_match(&s)
+struct Args {
+    command: Command,
+    tasks: usize,
+    cycles: usize,
+    series_size: usize
+    //out_file_path: &'static String
 }
 
-fn parse_usize(s: &String) -> usize {
-    s.parse::<usize>().unwrap()
-}
+impl Args {
 
-fn validate_args(args: &ArgsVec) -> bool {
-    validate_usize(&args[ARG_IDX_TASKS_PER_CPU]) && 
-    validate_usize(&args[ARG_IDX_ITERATIONS])
-}
-
-fn accept_command(args: &ArgsVec) -> Command {
-
-    let mut cmd: Command = Command::Help;
-
-    if args.len() > 1 {
-        match &*args[ARG_IDX_COMMAND] {
-            "s" => {cmd = Command::RequestSysParams;}
-            "p" => {cmd = Command::MeasureConcurrencyProfit;}
-            _   => {cmd = Command::Help;}
-        }
-    } 
-
-    cmd
-}
-
-fn accept_tasks_per_cpu(args: &ArgsVec) -> usize {
-    parse_usize(&args[ARG_IDX_TASKS_PER_CPU])
-}
-
-fn accept_iterations(args: &ArgsVec) -> usize {
-    parse_usize(&args[ARG_IDX_ITERATIONS])
-}
-
-fn accept_out_file_path(args: &ArgsVec) -> &str {
-    if args.len() == ARG_IDX_OUT_FILE_PATH + 1 {
-        return &args[ARG_IDX_OUT_FILE_PATH];
-    } else {
-        return "";
+    fn get_command(self: &Self) -> Command {
+        self.command
     }
+
+    fn get_tasks(self: &Self) -> usize {
+        self.tasks
+    }
+
+    fn get_cycles(self: &Self) -> usize {
+        self.cycles
+    }
+
+    fn get_series_size(self: &Self) -> usize {
+        self.series_size
+    }
+
+    /*fn get_out_file_path(self: &Self) -> &String {
+        self.out_file_path
+    }*/
+
+    fn parse_command(self: &Self, args: &ArgsVec) -> Command {
+
+        let mut cmd: Command = Command::Help;
+    
+        if args.len() > 1 {
+            match &*args[ARG_IDX_COMMAND] {
+                "s" => {cmd = Command::RequestSysParams;}
+                "p" => {cmd = Command::MeasureConcurrencyProfit;}
+                _   => {cmd = Command::Help;}
+            }
+        } 
+    
+        cmd
+    }
+
+    fn parse_tasks(self: &Self, args: &ArgsVec) -> usize {
+        parse_usize(&args[ARG_IDX_TASKS])
+    }
+
+    fn parse_cycles(self: &Self, args: &ArgsVec) -> usize {
+        parse_usize(&args[ARG_IDX_CYCLES])
+    }
+    
+    fn parse_series_size(self: &Self, args: &ArgsVec) -> usize {
+        parse_usize(&args[ARG_IDX_SERIES_SIZE])
+    }
+    
+    /*fn parse_out_file_path(self: &Self, args: &ArgsVec) -> &String {
+        if args.len() == ARG_IDX_OUT_FILE_PATH + 1 {
+            return &"foo.txt".to_string(); //&args[ARG_IDX_OUT_FILE_PATH];
+        } else {
+            return &"".to_string();
+        }
+    }*/
+    
+    fn parse(mut self: Self, args: &ArgsVec) -> Self {
+
+        if args.len() >= 1 {
+            self.command = self.parse_command(args);
+            if args.len() >= 4 {
+                self.tasks = self.parse_tasks(args);
+                self.cycles = self.parse_cycles(args);
+                self.series_size = self.parse_series_size(args);
+            }
+            //self.out_file_path = &self.parse_out_file_path(args);
+        }
+
+        self
+    }
+
+    fn is_valid(self: &Self) -> bool {
+        self.get_tasks() > 0 &&
+        self.get_cycles() > 0 &&
+        self.get_series_size() > 0 && 
+        self.get_series_size() <= self.get_tasks()
+    }
+}
+
+fn accept_args(args: ArgsVec) -> Args {
+    Args{command: Command::Help, 
+         tasks: 0, 
+         cycles: 0, 
+         series_size: 0}.parse(&args) 
+         //out_file_path: &"".to_string()}.parse(&args)
 }
 
 
@@ -523,23 +644,24 @@ fn accept_out_file_path(args: &ArgsVec) -> &str {
 
 fn main() {
 
-    print_report_header();
+    print_salutation();
 
-    let args: Vec<String> = env::args().collect();
+    let args: Args = accept_args(env::args().collect());
 
-    match accept_command(&args) {
+    match args.get_command() {
         Command::Help => {
             print_help();
         }
         Command::RequestSysParams => {
-            print_sysparams();
+            test_sysparams();
         }
         Command::MeasureConcurrencyProfit => {
-            if validate_args(&args) {
-                let report = measure_concurrency_profit(
-                    accept_tasks_per_cpu(&args),
-                    accept_iterations(&args));
-                save_text(accept_out_file_path(&args), &format_report(&report));
+            if args.is_valid() {
+                let report = test_concurrency_profit(
+                    args.get_tasks(),
+                    args.get_cycles(), 
+                    args.get_series_size());
+                save_text("report.txt", &format_report(&report));
             } else {
                 print_help();
             }
