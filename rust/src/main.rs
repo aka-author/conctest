@@ -461,9 +461,9 @@ fn format_report(report: &Report) -> String {
     &format_observation_schedules_section(&report)
 }
 
-fn save_text(out_file_path: &str, text: &String) {
+fn save_text(out_file_path: &String, text: &String) {
 
-    if out_file_path != "" {
+    if *out_file_path != "".to_string() {
         match File::create(Path::new(out_file_path)) {
             Ok(mut out_file) => {
                 out_file.write_all(&text.as_bytes()).unwrap();
@@ -541,14 +541,14 @@ const ARG_IDX_COMMAND: usize = 1;
 const ARG_IDX_TASKS: usize = 2;
 const ARG_IDX_CYCLES: usize = 3;
 const ARG_IDX_SERIES_SIZE: usize = 4;
-//const ARG_IDX_OUT_FILE_PATH: usize = 5;
+const ARG_IDX_OUT_FILE_PATH: usize = 5;
 
 struct Args {
     command: Command,
     tasks: usize,
     cycles: usize,
-    series_size: usize
-    //out_file_path: &'static String
+    series_size: usize,
+    out_file_path: String
 }
 
 impl Args {
@@ -569,9 +569,9 @@ impl Args {
         self.series_size
     }
 
-    /*fn get_out_file_path(self: &Self) -> &String {
-        self.out_file_path
-    }*/
+    fn get_out_file_path(self: &Self) -> String {
+        self.out_file_path.clone()
+    }
 
     fn parse_command(self: &Self, args: &ArgsVec) -> Command {
 
@@ -600,13 +600,13 @@ impl Args {
         parse_usize(&args[ARG_IDX_SERIES_SIZE])
     }
     
-    /*fn parse_out_file_path(self: &Self, args: &ArgsVec) -> &String {
+    fn parse_out_file_path(self: &Self, args: &ArgsVec) -> String {
         if args.len() == ARG_IDX_OUT_FILE_PATH + 1 {
-            return &"foo.txt".to_string(); //&args[ARG_IDX_OUT_FILE_PATH];
+            return args[ARG_IDX_OUT_FILE_PATH].to_string(); //&args[ARG_IDX_OUT_FILE_PATH];
         } else {
-            return &"".to_string();
+            return "".to_string();
         }
-    }*/
+    }
     
     fn parse(mut self: Self, args: &ArgsVec) -> Self {
 
@@ -617,7 +617,7 @@ impl Args {
                 self.cycles = self.parse_cycles(args);
                 self.series_size = self.parse_series_size(args);
             }
-            //self.out_file_path = &self.parse_out_file_path(args);
+            self.out_file_path = self.parse_out_file_path(args);
         }
 
         self
@@ -635,8 +635,8 @@ fn accept_args(args: ArgsVec) -> Args {
     Args{command: Command::Help, 
          tasks: 0, 
          cycles: 0, 
-         series_size: 0}.parse(&args) 
-         //out_file_path: &"".to_string()}.parse(&args)
+         series_size: 0, 
+         out_file_path: "".to_string()}.parse(&args)
 }
 
 
@@ -661,7 +661,7 @@ fn main() {
                     args.get_tasks(),
                     args.get_cycles(), 
                     args.get_series_size());
-                save_text("report.txt", &format_report(&report));
+                save_text(&args.get_out_file_path(), &format_report(&report));
             } else {
                 print_help();
             }
