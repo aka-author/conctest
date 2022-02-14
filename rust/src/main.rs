@@ -17,7 +17,7 @@ use std::fs::File;
 use std::io::Write;
 
 
-// Measuring time and working with schedules
+// Measuring time
 
 type TimeMs = i128;
 type TimeCompatibleInt = i128;
@@ -33,8 +33,8 @@ fn now_ms(watch: &SystemTime) -> TimeMs {
     }
 }
 
-fn duration_ms(clock: &SystemTime) -> TimeMs {
-    match clock.elapsed() {
+fn duration_ms(watch: &SystemTime) -> TimeMs {
+    match watch.elapsed() {
         Ok(elapsed) => {
             return elapsed.as_millis() as TimeMs;
         }
@@ -43,53 +43,6 @@ fn duration_ms(clock: &SystemTime) -> TimeMs {
         }
     }
 }
-
-struct ScheduleEntry {
-    started_at: TimeMs,
-    duration: TimeMs
-}
-
-impl ScheduleEntry {
-
-    fn create_sd(started_at: TimeMs, duration: TimeMs) -> ScheduleEntry {
-        ScheduleEntry{started_at, duration}
-    }
-
-    fn get_started_at(self: &Self) -> TimeMs {
-        self.started_at
-    }
-
-    fn recalc_start_from(self: &mut Self, initial_moment: TimeMs) {
-        self.started_at -= initial_moment
-    }
-
-    fn get_finished_at(self: &Self) -> TimeMs {
-        self.started_at + self.duration
-    }
-    
-    fn get_duration(self: &Self) -> TimeMs {
-        self.duration
-    }
-}
-
-type Schedule = Vec<ScheduleEntry>;
-
-/*
-impl Schedule {
-
-    fn add_entry(self: &mut Self, started_at: TimeMs, duration: TimeMs) {
-        self.push(ScheduleEntry{started_at, duration});    
-    }
-
-    fn earliest_start(self: &Self) -> TimeMs {
-
-    }
-
-    fn latest_finish(self: &Self) -> TimeMs {
-        
-    }
-
-}*/
 
 
 // Spending time with fun
@@ -106,193 +59,241 @@ fn random_triplet() -> Triplet {
 
 fn get_next_triplet(triplet: Triplet) -> Triplet {
 
-    let mut next_member = triplet.0 + triplet.1 - triplet.2;
+    let applicant = triplet.0 + triplet.1 - triplet.2;
 
-    if next_member.abs() > 1.0 {
-        next_member = 1.0/next_member;
+    if applicant.abs() <= 1.0 {
+        return (triplet.1, triplet.2, applicant);
+    } else {
+        return (triplet.1, triplet.2, 1.0/applicant);
     }
-
-    (triplet.1, triplet.2, next_member)
 }
 
-fn is_bingo(member: f64) -> bool {
-    -0.00000000000001 < member && member < 0.00000000000001
+fn approx_eq(f1: f64, f2: f64) -> bool {
+    return (f1 - f2).abs() < 0.00000000000001
+}
+
+fn is_convergent(triplet: Triplet, next_triplet: Triplet) -> bool {
+    approx_eq(triplet.0, next_triplet.0) &&
+    approx_eq(triplet.1, next_triplet.1) &&
+    approx_eq(triplet.2, next_triplet.2)
 }
 
 fn iterate(initial_triplet: Triplet, cycles: usize) -> f64 {
-
-    let mut triplet = initial_triplet;
     
+    let mut triplet = initial_triplet;
+
+    let mut prokukarek = false;
+
     for step in 0..cycles {
     
-        triplet = get_next_triplet(triplet);
+        let next_triplet = get_next_triplet(triplet);
 
-        if is_bingo(triplet.2) {
-            print_bingo(initial_triplet, step, triplet.2);
+        if is_convergent(triplet, next_triplet) && !prokukarek {
+            print_convergency(initial_triplet, step, triplet.2);
+            prokukarek = true;
         }
+
+        triplet = next_triplet;
     }    
 
     triplet.2
 }
 
-fn standard_task(cycles: usize) -> ScheduleEntry {    
-    
+fn standard_task(n_cycles: usize) -> Task {     
     let watch = SystemTime::now();
+    let start= now_ms(&watch);
+    iterate(random_triplet(), n_cycles);
+    Task::create(start, duration_ms(&watch))
+}
+
+
+// Managing observation outcomes
+
+struct Task {
+    start: TimeMs,
+    duration: TimeMs,
+}
+
+impl Task {
+
+    fn get_start(self: &Self) -> TimeMs {
+        self.start
+    }
+
+    fn recalc_start_relative(self: &mut Self, initial_moment: TimeMs) {
+        self.start -= initial_moment
+    }
+
+    fn get_finish(self: &Self) -> TimeMs {
+        self.start + self.duration
+    }
     
-    let started_at= now_ms(&watch);
+    fn get_duration(self: &Self) -> TimeMs {
+        self.duration
+    }
 
-    iterate(random_triplet(), cycles);
+    fn create(start: TimeMs, duration: TimeMs) -> Task {
+        Task{start, duration}
+    }
+}
 
-    ScheduleEntry::create_sd(started_at, duration_ms(&watch))
+struct Observation {
+    tasks: Vec<Task>,
+    concurrency_profit: f64
+}
+
+impl Observation {
+
+    fn register_task(self: &mut Self, task: Task) {
+        self.tasks.push(task);    
+    }
+
+    fn count_tasks(self: &Self) -> usize {
+        self.tasks.len()
+    }
+
+    fn get_earliest_start(self: &Self) -> TimeMs {
+        self.tasks.iter().map(|task| task.get_start()).min().unwrap()
+    }
+
+    fn get_latest_finish(self: &Self) -> TimeMs {
+        self.tasks.iter().map(|task| task.get_finish()).max().unwrap()
+    }
+
+    fn recalc_tasks_relative_earliest_start(self: &mut Self) {
+
+        let initial_moment = self.get_earliest_start();
+
+        for task in &mut self.tasks {
+            task.recalc_start_relative(initial_moment);
+        }
+    }
+
+    fn get_total_duration(self: &Self) -> TimeMs {
+        (self.get_latest_finish() - self.get_earliest_start()) as TimeMs
+    }
+
+    fn sum_duration(self: &Self) -> TimeMs {
+        let mut sum: TimeMs = 0;
+        self.tasks.iter().for_each(|task| sum += task.get_duration());
+        sum    
+    }
+    
+    fn get_mean_task_duration(self: &Self) -> TimeMs {
+        self.sum_duration()/(self.count_tasks() as TimeCompatibleInt)       
+    }
+    
+    fn get_standard_deviation(self: &Self) -> TimeMs {
+    
+        let mut dispersion: TimeMs = 0;
+        let mut deviation: TimeMs;
+    
+        for task in &self.tasks {
+            deviation = self.get_mean_task_duration() - task.get_duration();
+            dispersion += deviation*deviation;
+        }
+    
+        ((dispersion as f64).sqrt()/(self.count_tasks() as f64 - 1.0)) as TimeMs       
+    }
+    
+    fn get_concurrency_profit(self: &Self) -> f64 {
+        self.concurrency_profit
+    }    
+
+    fn calc_concurrency_profit(self: &mut Self, task_duration_min: TimeMs) -> f64 {
+        
+        let serial_duration = 
+            (self.count_tasks() as TimeCompatibleInt)*task_duration_min;
+        
+        self.concurrency_profit = 
+            1.0 - (self.get_total_duration() as f64)/(serial_duration as f64);
+
+        return self.concurrency_profit
+    }
+
+    fn with_capacity(capacity: usize) -> Observation {
+
+        Observation {
+            tasks: Vec::with_capacity(capacity),
+            concurrency_profit: 0f64 
+        }
+    }   
+}
+
+struct Report {
+    observations: Vec<Observation>    
+}
+
+impl Report {
+
+    fn count_observations(self: &Self) -> usize {
+        self.observations.len()
+    }
+
+    fn get_task_duration_min(self: &Self) -> TimeMs {
+        self.observations[0].get_total_duration()
+    }
+
+    fn register_observation(self: &mut Self, mut obs: Observation) {
+        
+        if self.count_observations() > 0 {
+            obs.calc_concurrency_profit(self.get_task_duration_min());
+        }
+
+        obs.recalc_tasks_relative_earliest_start();
+
+        self.observations.push(obs);
+    }
+
+    fn get_observation(self: &Self, idx: usize) -> &Observation {
+        &(self.observations[idx])
+    }
+
+    fn create(ntasks_max: usize) -> Report {
+        Report {
+            observations: Vec::with_capacity(ntasks_max)
+        }
+    }
 }
 
 
 // Performing observations
 
-struct Observation {
-    mean_task_duration: TimeMs,
-    standard_deviation: TimeMs,
-    total_duration: TimeMs,
-    concurrency_profit: f64,
-    task_schedule: Schedule
-}
+fn count_series(n_tasks: usize, series_size: usize) -> usize {
 
-fn count_tasks(oo: &Observation) -> usize {
-    oo.task_schedule.len()
-}
+    let mut n_series = n_tasks/series_size;
 
-fn last_task(oo: &Observation) -> usize {
-    count_tasks(oo) - 1
-}
-
-fn earliest_start(oo: &Observation) -> TimeMs {
-    
-    let mut es: TimeMs = oo.task_schedule[0].get_started_at();
-
-    for entry in &oo.task_schedule {  
-        if es > entry.get_started_at() {
-            es = entry.get_started_at();
-        }
-    }    
-    
-    es    
-}
-
-fn latest_finish(oo: &Observation) -> TimeMs {
-
-    let mut lf: TimeMs = oo.task_schedule[last_task(oo)].get_finished_at();
-
-    let mut candidate: TimeMs;
-
-    for entry in &oo.task_schedule {
-        candidate = entry.get_finished_at();
-        if lf < candidate {
-            lf = candidate;
-        } 
-    }
-    
-    lf
-}
-
-fn total_duration(oo: &Observation) -> TimeMs {
-    (latest_finish(oo) - earliest_start(oo)) as TimeMs
-}
-
-fn sum_duration(oo: &Observation) -> TimeMs {
-
-    let mut sum_duration: TimeMs = 0;
-    
-    for entry in &oo.task_schedule {
-        sum_duration += entry.get_duration();
+    if series_size*n_series < n_tasks {
+        n_series += 1;
     }
 
-    sum_duration    
+    n_series
 }
 
-fn mean_task_duration(oo: &Observation) -> TimeMs {
-    sum_duration(oo)/(count_tasks(oo) as TimeCompatibleInt)       
-}
+fn observe(n_tasks: usize, n_cycles: usize, series_size: usize) -> Observation {
 
-fn standard_deviation(oo: &Observation) -> TimeMs {
-
-    let mut dispersion: TimeMs = 0;
-    let mut deviation: TimeMs;
-
-    for entry in &oo.task_schedule {
-        deviation = oo.mean_task_duration - entry.get_duration();
-        dispersion += deviation*deviation;
-    }
-
-    ((dispersion as f64).sqrt()/(count_tasks(oo) as f64 - 1.0)) as TimeMs       
-}
-
-fn concurrency_profit(oo: &Observation, report: &Report) -> f64 {
-    if report.len() == 0 {
-        return 0.0;
-    } else {
-        let min_task_duration = report[0].total_duration;
-        let queue_total_duration = 
-            (count_tasks(oo) as TimeCompatibleInt)*min_task_duration;
-        return 1.0 - 
-            (oo.total_duration as f64)/(queue_total_duration as f64); 
-    }
-}
-
-fn observation(task_schedule: Schedule) -> Observation {
-
-    let mut oo = 
-        Observation {
-            mean_task_duration: 0,
-            standard_deviation: 0,
-            total_duration: 0,
-            concurrency_profit: 0f64, 
-            task_schedule
-        };    
-        
-    oo.total_duration = total_duration(&oo);
-    oo.mean_task_duration = mean_task_duration(&oo);
-    oo.standard_deviation = standard_deviation(&oo);
-
-    let earliest_start: TimeMs = earliest_start(&oo);
-    for i in 0..oo.task_schedule.len() {
-        oo.task_schedule[i].recalc_start_from(earliest_start);
-    }
-        
-    oo    
-}
-
-fn count_series(tasks: usize, series_size: usize) -> usize {
-    if tasks % series_size == 0 {
-        return tasks/series_size;
-    } else {
-        return tasks/series_size + 1;
-    }
-}
-
-fn observe(tasks: usize, cycles: usize, series_size: usize) -> Observation {
-
-    let series = count_series(tasks, series_size);
+    let n_series = count_series(n_tasks, series_size);
     let mut count_tasks_total = 0usize;
     let mut count_tasks_series = 0usize;
-    let mut handles: Vec<ScopedJoinHandle<ScheduleEntry>> = Vec::with_capacity(tasks); 
+    let mut handles: Vec<ScopedJoinHandle<Task>> = Vec::with_capacity(n_tasks); 
 
-    for _ in 0..series { 
+    for _ in 0..n_series { 
         crossbeam::scope(|spawner| {
             count_tasks_series = 0;
-            while count_tasks_total < tasks && count_tasks_series < series_size {
-                handles.push(spawner.spawn(|| {standard_task(cycles)}));
+            while count_tasks_total < n_tasks && count_tasks_series < series_size {
+                handles.push(spawner.spawn(|| {standard_task(n_cycles)}));
                 count_tasks_series += 1;
                 count_tasks_total += 1;
             }
         });
     }
 
-    let mut task_schedule: Schedule = Vec::with_capacity(handles.capacity());
+    let mut obs = Observation::with_capacity(handles.capacity());
     for handle in handles {
-        task_schedule.push(handle.join());
+        obs.register_task(handle.join());
     }
 
-    observation(task_schedule)
+    obs
 }
 
 
@@ -305,16 +306,16 @@ fn count_cpus() -> usize {
 fn count_cycles_per_sec() -> usize {
 
     let mut duration: TimeMs = 0;    
-    let mut cycles: usize = 1; 
+    let mut n_cycles: usize = 1; 
 
     while duration < 1000 {
-        cycles *= 10;
+        n_cycles *= 10;
         let watch = SystemTime::now();
-        iterate(random_triplet(), cycles);
+        iterate(random_triplet(), n_cycles);
         duration = duration_ms(&watch);
     }
 
-    (1000*cycles as TimeCompatibleInt/duration) as usize
+    (1000*n_cycles as TimeCompatibleInt/duration) as usize
 }
 
 
@@ -356,17 +357,17 @@ fn print_profit_header() {
     println!("============================================================");
 }
 
-fn print_profit_entry(oo: &Observation) {
+fn print_profit_entry(obs: &Observation) {
     println!("{:5} {:19} {:10} {:15} {:6.0}%", 
-             count_tasks(oo),
-             oo.mean_task_duration,
-             oo.standard_deviation, 
-             oo.total_duration, 
-             oo.concurrency_profit*100.0);
+             obs.count_tasks(),
+             obs.get_mean_task_duration(),
+             obs.get_standard_deviation(), 
+             obs.get_total_duration(), 
+             obs.get_concurrency_profit()*100.0);
 }
 
-fn print_bingo(initial_triplet: Triplet, step: usize, member: f64) {
-    println!("Bingo: {}, {}, and {} give {} on step {}.", 
+fn print_convergency(initial_triplet: Triplet, step: usize, member: f64) {
+    println!("The sequence has converged: {}, {}, and {} give {} since step {}.", 
              initial_triplet.0, 
              initial_triplet.1, 
              initial_triplet.2, 
@@ -389,21 +390,21 @@ fn format_observation_totals_section_header() -> String {
     "Tasks,Mean task duration,Std. dev.,Total duration,Profit\n".to_string()
 }
 
-fn format_observation_totals(oo: &Observation) -> String {
+fn format_observation_totals(obs: &Observation) -> String {
     format!("{}, {}, {}, {}, {:.0}%\n", 
-            count_tasks(oo),
-            oo.mean_task_duration,
-            oo.standard_deviation,
-            oo.total_duration, 
-            100.0*oo.concurrency_profit)
+            obs.count_tasks(),
+            obs.get_mean_task_duration(),
+            obs.get_standard_deviation(),
+            obs.get_total_duration(), 
+            obs.get_concurrency_profit()*100.0)
 }
 
 fn format_observation_totals_section_data(report: &Report) -> String {
 
     let mut formatted_data: String = "".to_string();
 
-    for oo in report {
-        formatted_data += &format_observation_totals(oo);
+    for obs in &report.observations {
+        formatted_data += &format_observation_totals(obs);
     }
 
     formatted_data
@@ -414,27 +415,25 @@ fn format_observation_totals_section(report: &Report) -> String {
     &format_observation_totals_section_data(&report)
 }
 
-fn format_observation_schedule_entry(tasks: usize, 
-                                     task: usize, 
-                                     entry: &ScheduleEntry) -> String {
+fn format_task(n_tasks: usize, task_idx: usize, task: &Task) -> String {
     format!("{},{},{},{},{}\n", 
-            tasks,
-            task, 
-            entry.get_started_at(), 
-            entry.get_finished_at(), 
-            entry.get_duration())
+            n_tasks,
+            task_idx, 
+            task.get_start(), 
+            task.get_finish(), 
+            task.get_duration())
 }
 
-fn format_observation_schedule(oo: &Observation) -> String {
+fn format_tasks(obs: &Observation) -> String {
 
     let mut schedule_text: String = "".to_string();
 
-    let tasks: usize = count_tasks(&oo);
-    let mut task: usize = 1;
+    let n_tasks: usize = obs.count_tasks();
+    let mut task_idx: usize = 1;
 
-    for entry in &oo.task_schedule {
-        schedule_text += &format_observation_schedule_entry(tasks, task, entry);
-        task += 1;
+    for task in &obs.tasks {
+        schedule_text += &format_task(n_tasks, task_idx, task);
+        task_idx += 1;
     }
 
     schedule_text
@@ -448,8 +447,8 @@ fn format_observation_schedules_section(report: &Report) -> String {
 
     let mut section_text: String = format_observation_schedule_header();
     
-    for oo in report {
-        section_text += &format_observation_schedule(oo);
+    for obs in &report.observations {
+        section_text += &format_tasks(obs);
     }
 
     section_text
@@ -485,27 +484,22 @@ fn test_sysparams() {
     print_sysparams_footer();
 }
 
-type Report = Vec<Observation>;
-
-fn test_concurrency_profit(tasks_max: usize, cycles: usize, series_size: usize) -> Report {
+fn test_concurrency_profit(tasks_max: usize, n_cycles: usize, series_size: usize) -> Report {
     
-    let mut report: Report = Vec::with_capacity(tasks_max);
+    let mut report = Report::create(tasks_max);
 
     print_profit_header();
 
-    let mut oo: Observation;
+    for n_tasks in 1..tasks_max + 1 {
 
-    for tasks in 1..tasks_max + 1 {
+        let obs = observe(n_tasks, n_cycles, series_size);
 
-        oo = observe(tasks, cycles, series_size);
-        oo.concurrency_profit = concurrency_profit(&oo, &report);
+        report.register_observation(obs);
         
-        print_profit_entry(&oo);
-        if tasks % count_cpus() == 0 && tasks != tasks_max {
+        print_profit_entry(report.get_observation(n_tasks - 1));
+        if n_tasks % count_cpus() == 0 && n_tasks != tasks_max {
             print_profit_separator();
-        }
-
-        report.push(oo);
+        }    
     } 
 
     print_profit_footer();
@@ -538,15 +532,15 @@ enum Command {
 }
 
 const ARG_IDX_COMMAND: usize = 1;
-const ARG_IDX_TASKS: usize = 2;
-const ARG_IDX_CYCLES: usize = 3;
+const ARG_IDX_TASKS_MAX: usize = 2;
+const ARG_IDX_N_CYCLES: usize = 3;
 const ARG_IDX_SERIES_SIZE: usize = 4;
 const ARG_IDX_OUT_FILE_PATH: usize = 5;
 
 struct Args {
     command: Command,
-    tasks: usize,
-    cycles: usize,
+    tasks_max: usize,
+    n_cycles: usize,
     series_size: usize,
     out_file_path: String
 }
@@ -557,12 +551,12 @@ impl Args {
         self.command
     }
 
-    fn get_tasks(self: &Self) -> usize {
-        self.tasks
+    fn get_tasks_max(self: &Self) -> usize {
+        self.tasks_max
     }
 
-    fn get_cycles(self: &Self) -> usize {
-        self.cycles
+    fn get_n_cycles(self: &Self) -> usize {
+        self.n_cycles
     }
 
     fn get_series_size(self: &Self) -> usize {
@@ -588,12 +582,12 @@ impl Args {
         cmd
     }
 
-    fn parse_tasks(self: &Self, args: &ArgsVec) -> usize {
-        parse_usize(&args[ARG_IDX_TASKS])
+    fn parse_tasks_max(self: &Self, args: &ArgsVec) -> usize {
+        parse_usize(&args[ARG_IDX_TASKS_MAX])
     }
 
-    fn parse_cycles(self: &Self, args: &ArgsVec) -> usize {
-        parse_usize(&args[ARG_IDX_CYCLES])
+    fn parse_n_cycles(self: &Self, args: &ArgsVec) -> usize {
+        parse_usize(&args[ARG_IDX_N_CYCLES])
     }
     
     fn parse_series_size(self: &Self, args: &ArgsVec) -> usize {
@@ -602,7 +596,7 @@ impl Args {
     
     fn parse_out_file_path(self: &Self, args: &ArgsVec) -> String {
         if args.len() == ARG_IDX_OUT_FILE_PATH + 1 {
-            return args[ARG_IDX_OUT_FILE_PATH].to_string(); //&args[ARG_IDX_OUT_FILE_PATH];
+            return args[ARG_IDX_OUT_FILE_PATH].to_string(); 
         } else {
             return "".to_string();
         }
@@ -613,8 +607,8 @@ impl Args {
         if args.len() >= 1 {
             self.command = self.parse_command(args);
             if args.len() >= 4 {
-                self.tasks = self.parse_tasks(args);
-                self.cycles = self.parse_cycles(args);
+                self.tasks_max = self.parse_tasks_max(args);
+                self.n_cycles = self.parse_n_cycles(args);
                 self.series_size = self.parse_series_size(args);
             }
             self.out_file_path = self.parse_out_file_path(args);
@@ -624,17 +618,17 @@ impl Args {
     }
 
     fn is_valid(self: &Self) -> bool {
-        self.get_tasks() > 0 &&
-        self.get_cycles() > 0 &&
+        self.get_tasks_max() > 0 &&
+        self.get_n_cycles() > 0 &&
         self.get_series_size() > 0 && 
-        self.get_series_size() <= self.get_tasks()
+        self.get_series_size() <= self.get_tasks_max()
     }
 }
 
 fn accept_args(args: ArgsVec) -> Args {
     Args{command: Command::Help, 
-         tasks: 0, 
-         cycles: 0, 
+         tasks_max: 0, 
+         n_cycles: 0, 
          series_size: 0, 
          out_file_path: "".to_string()}.parse(&args)
 }
@@ -658,8 +652,8 @@ fn main() {
         Command::MeasureConcurrencyProfit => {
             if args.is_valid() {
                 let report = test_concurrency_profit(
-                    args.get_tasks(),
-                    args.get_cycles(), 
+                    args.get_tasks_max(),
+                    args.get_n_cycles(), 
                     args.get_series_size());
                 save_text(&args.get_out_file_path(), &format_report(&report));
             } else {
