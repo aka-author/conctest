@@ -78,13 +78,13 @@ fn is_convergent(triplet: Triplet, next_triplet: Triplet) -> bool {
     approx_eq(triplet.2, next_triplet.2)
 }
 
-fn iterate(initial_triplet: Triplet, cycles: usize) -> f64 {
+fn iterate(initial_triplet: Triplet, n_cycles: usize) -> f64 {
     
     let mut triplet = initial_triplet;
 
     let mut prokukarek = false;
 
-    for step in 0..cycles {
+    for step in 0..n_cycles {
     
         let next_triplet = get_next_triplet(triplet);
 
@@ -111,7 +111,7 @@ fn standard_task(n_cycles: usize) -> Task {
 
 struct Task {
     start: TimeMs,
-    duration: TimeMs,
+    duration: TimeMs
 }
 
 impl Task {
@@ -187,9 +187,11 @@ impl Observation {
     
         let mut dispersion: TimeMs = 0;
         let mut deviation: TimeMs;
+
+        let mean_task_duration = self.get_mean_task_duration();
     
         for task in &self.tasks {
-            deviation = self.get_mean_task_duration() - task.get_duration();
+            deviation = mean_task_duration - task.get_duration();
             dispersion += deviation*deviation;
         }
     
@@ -339,8 +341,8 @@ fn print_sysparams_header() {
     println!("====================================");
 }
 
-fn print_cpus(cpus: usize) {
-    println!("CPUs available {:21}", cpus);
+fn print_cpus(n_cpus: usize) {
+    println!("CPUs available {:>21}", n_cpus);
 }
 
 fn print_cycles_per_sec(cycles_per_sec: usize) {
