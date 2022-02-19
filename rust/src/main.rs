@@ -612,8 +612,8 @@ impl Args {
                 self.tasks_max = self.parse_tasks_max(args);
                 self.n_cycles = self.parse_n_cycles(args);
                 self.series_size = self.parse_series_size(args);
+                self.out_file_path = self.parse_out_file_path(args);
             }
-            self.out_file_path = self.parse_out_file_path(args);
         }
 
         self
