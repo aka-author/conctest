@@ -127,7 +127,7 @@ func (o *Observation) register_task(task Task) {
 }
 
 func (o Observation) count_tasks() int {
-	return int(len(o.tasks))
+	return len(o.tasks)
 }
 
 func (o Observation) get_earliest_start() TimeMs {
@@ -213,8 +213,8 @@ func (o Observation) calc_concurrency_profit(task_duration_min TimeMs) float64 {
 	return o.concurrency_profit
 }
 
-func create_observation(tasks []Task) Observation {
-	return Observation{tasks, 0.0}
+func create_observation() Observation {
+	return Observation{[]Task{}, 0.0}
 }
 
 type Report struct {
@@ -263,24 +263,22 @@ func count_series(n_tasks, series_size int) int {
 
 func observe(n_tasks, n_cycles, series_size int) Observation {
 
+	obs := create_observation()
+
 	n_series := count_series(n_tasks, series_size)
 	var count_tasks_total int = 0
 	var count_tasks_series int = 0
 
-	var tasks []Task
-
 	for series_idx := 0; series_idx < n_series; series_idx++ {
 
 		var syncler sync.WaitGroup
-
-		// syncler.Add(1)
 
 		for count_tasks_total < n_tasks && count_tasks_series < series_size {
 
 			syncler.Add(1)
 
 			go func() {
-				tasks = append(tasks, standard_task(n_cycles))
+				obs.register_task(standard_task(n_cycles))
 				syncler.Done()
 			}()
 
@@ -291,7 +289,7 @@ func observe(n_tasks, n_cycles, series_size int) Observation {
 		syncler.Wait()
 	}
 
-	return create_observation(tasks)
+	return obs
 }
 
 // Getting parameters of the current system
@@ -312,7 +310,7 @@ func count_cycles_per_sec() int {
 		duration = duration_ms(start)
 	}
 
-	return 1000 * n_cycles / int(duration)
+	return 1000 * n_cycles / duration
 }
 
 // Printing messages to a console

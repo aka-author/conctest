@@ -45,76 +45,20 @@ fn duration_ms(watch: &SystemTime) -> TimeMs {
 }
 
 
-// Spending time with fun
-
-type Triplet = (f64, f64, f64);
-
-fn random_item() -> f64 {    
-    rand::random()
-}
-
-fn random_triplet() -> Triplet {
-    (random_item(), random_item(), random_item())
-}
-
-fn get_next_triplet(triplet: Triplet) -> Triplet {
-
-    let applicant = triplet.0 + triplet.1 - triplet.2;
-
-    if applicant.abs() <= 1.0 {
-        return (triplet.1, triplet.2, applicant);
-    } else {
-        return (triplet.1, triplet.2, 1.0/applicant);
-    }
-}
-
-fn approx_eq(f1: f64, f2: f64) -> bool {
-    return (f1 - f2).abs() < 0.00000000000001
-}
-
-fn is_convergent(triplet: Triplet, next_triplet: Triplet) -> bool {
-    approx_eq(triplet.0, next_triplet.0) &&
-    approx_eq(triplet.1, next_triplet.1) &&
-    approx_eq(triplet.2, next_triplet.2)
-}
-
-fn iterate(initial_triplet: Triplet, n_cycles: usize) -> f64 {
-    
-    let mut triplet = initial_triplet;
-
-    let mut prokukarek = false;
-
-    for step in 0..n_cycles {
-    
-        let next_triplet = get_next_triplet(triplet);
-
-        if is_convergent(triplet, next_triplet) && !prokukarek {
-            print_convergency(initial_triplet, step, triplet.2);
-            prokukarek = true;
-        }
-
-        triplet = next_triplet;
-    }    
-
-    triplet.2
-}
-
-fn standard_task(n_cycles: usize) -> Task {     
-    let watch = SystemTime::now();
-    let start= now_ms(&watch);
-    iterate(random_triplet(), n_cycles);
-    Task::create(start, duration_ms(&watch))
-}
-
-
 // Managing observation outcomes
 
+#[derive(Copy, Clone)]
 struct Task {
+    idx:    usize,
     start: TimeMs,
     duration: TimeMs
 }
 
 impl Task {
+
+    fn get_idx(self: &Self) -> usize {
+        self.idx
+    }
 
     fn get_start(self: &Self) -> TimeMs {
         self.start
@@ -132,20 +76,21 @@ impl Task {
         self.duration
     }
 
-    fn create(start: TimeMs, duration: TimeMs) -> Task {
-        Task{start, duration}
+    fn create(idx: usize, start: TimeMs, duration: TimeMs) -> Task {
+        Task{idx, start, duration}
     }
 }
 
 struct Observation {
     tasks: Vec<Task>,
+    concurrency_cost: f64,
     concurrency_profit: f64
 }
 
 impl Observation {
 
     fn register_task(self: &mut Self, task: Task) {
-        self.tasks.push(task);    
+        self.tasks[task.get_idx()] = task;    
     }
 
     fn count_tasks(self: &Self) -> usize {
@@ -198,27 +143,53 @@ impl Observation {
         ((dispersion as f64).sqrt()/(self.count_tasks() as f64 - 1.0)) as TimeMs       
     }
     
+    fn get_serial_duration(self: &mut Self, task_duration_min: TimeMs) -> TimeMs {
+        (self.count_tasks() as TimeCompatibleInt)*task_duration_min
+    }
+
+    fn get_concurrency_cost(self: &Self) -> f64 {
+        self.concurrency_cost
+    }
+
+    fn calc_concurrency_cost(self: &mut Self, task_duration_min: TimeMs) -> f64 {
+                
+        let sum_duration = self.sum_duration() as f64;
+        let serial_duration = 
+            self.get_serial_duration(task_duration_min) as f64;
+
+        self.concurrency_cost = 1.0 - serial_duration/sum_duration;
+
+        self.concurrency_cost
+    }
+
     fn get_concurrency_profit(self: &Self) -> f64 {
         self.concurrency_profit
     }    
 
     fn calc_concurrency_profit(self: &mut Self, task_duration_min: TimeMs) -> f64 {
-        
+                
+        let total_duration = self.get_total_duration() as f64;
         let serial_duration = 
-            (self.count_tasks() as TimeCompatibleInt)*task_duration_min;
-        
-        self.concurrency_profit = 
-            1.0 - (self.get_total_duration() as f64)/(serial_duration as f64);
+            self.get_serial_duration(task_duration_min) as f64;
 
-        return self.concurrency_profit
+        self.concurrency_profit = 1.0 - total_duration/serial_duration;
+
+        self.concurrency_profit
     }
 
-    fn with_capacity(capacity: usize) -> Observation {
+    fn create(n_tasks: usize) -> Observation {
 
-        Observation {
-            tasks: Vec::with_capacity(capacity),
+        let mut obs = Observation {
+            tasks: Vec::with_capacity(n_tasks),
+            concurrency_cost: 0f64, 
             concurrency_profit: 0f64 
+        };
+
+        for idx in 0..n_tasks {
+            obs.tasks.push(Task::create(idx, 0, 0));
         }
+
+        obs
     }   
 }
 
@@ -239,7 +210,9 @@ impl Report {
     fn register_observation(self: &mut Self, mut obs: Observation) {
         
         if self.count_observations() > 0 {
-            obs.calc_concurrency_profit(self.get_task_duration_min());
+            let task_duration_min = self.get_task_duration_min();
+            obs.calc_concurrency_cost(task_duration_min);
+            obs.calc_concurrency_profit(task_duration_min);
         }
 
         obs.recalc_tasks_relative_earliest_start();
@@ -259,6 +232,68 @@ impl Report {
 }
 
 
+// Spending time with fun
+
+type Triplet = (f64, f64, f64);
+
+fn random_item() -> f64 {    
+    rand::random()
+}
+
+fn random_triplet() -> Triplet {
+    (random_item(), random_item(), random_item())
+}
+
+fn get_next_triplet(triplet: Triplet) -> Triplet {
+
+    let applicant = triplet.0 + triplet.1 - triplet.2;
+
+    if applicant.abs() <= 1.0 {
+        return (triplet.1, triplet.2, applicant);
+    } else {
+        return (triplet.1, triplet.2, 1.0/applicant);
+    }
+}
+
+fn approx_eq(f1: f64, f2: f64) -> bool {
+    return (f1 - f2).abs() < 1e-15
+}
+
+fn is_convergent(triplet: Triplet, next_triplet: Triplet) -> bool {
+    approx_eq(triplet.0, next_triplet.0) &&
+    approx_eq(triplet.1, next_triplet.1) &&
+    approx_eq(triplet.2, next_triplet.2)
+}
+
+fn iterate(initial_triplet: Triplet, n_cycles: usize) -> f64 {
+    
+    let mut triplet = initial_triplet;
+
+    let mut prokukarek = false;
+
+    for step in 0..n_cycles {
+    
+        let next_triplet = get_next_triplet(triplet);
+
+        if is_convergent(triplet, next_triplet) && !prokukarek {
+            print_convergency(initial_triplet, step, triplet.2);
+            prokukarek = true;
+        }
+
+        triplet = next_triplet;
+    }    
+
+    triplet.2
+}
+
+fn standard_task(task_idx: usize, n_cycles: usize) -> Task {     
+    let watch = SystemTime::now();
+    let start= now_ms(&watch);
+    iterate(random_triplet(), n_cycles);
+    Task::create(task_idx, start, duration_ms(&watch))
+}
+
+
 // Performing observations
 
 fn count_series(n_tasks: usize, series_size: usize) -> usize {
@@ -275,22 +310,22 @@ fn count_series(n_tasks: usize, series_size: usize) -> usize {
 fn observe(n_tasks: usize, n_cycles: usize, series_size: usize) -> Observation {
 
     let n_series = count_series(n_tasks, series_size);
-    let mut count_tasks_total = 0usize;
     let mut count_tasks_series = 0usize;
+    let mut task_idx = 0usize;
     let mut handles: Vec<ScopedJoinHandle<Task>> = Vec::with_capacity(n_tasks); 
 
     for _ in 0..n_series { 
         crossbeam::scope(|spawner| {
             count_tasks_series = 0;
-            while count_tasks_total < n_tasks && count_tasks_series < series_size {
-                handles.push(spawner.spawn(|| {standard_task(n_cycles)}));
+            while task_idx < n_tasks && count_tasks_series < series_size {
+                handles.push(spawner.spawn(move || {standard_task(task_idx, n_cycles)}));
                 count_tasks_series += 1;
-                count_tasks_total += 1;
+                task_idx += 1;
             }
         });
     }
 
-    let mut obs = Observation::with_capacity(handles.capacity());
+    let mut obs = Observation::create(handles.capacity());
     for handle in handles {
         obs.register_task(handle.join());
     }
@@ -354,17 +389,18 @@ fn print_sysparams_footer() {
 }
 
 fn print_profit_header() {
-    println!("============================================================");
-    println!("Tasks  Mean task duration  Std. dev.  Total duration  Profit");
-    println!("============================================================");
+    println!("==================================================================");
+    println!("Tasks  Mean task duration  Std. dev.  Total duration  Cost  Profit");
+    println!("==================================================================");
 }
 
 fn print_profit_entry(obs: &Observation) {
-    println!("{:5} {:19} {:10} {:15} {:6.0}%", 
+    println!("{:5} {:19} {:10} {:15} {:4.0}% {:6.0}%", 
              obs.count_tasks(),
              obs.get_mean_task_duration(),
              obs.get_standard_deviation(), 
              obs.get_total_duration(), 
+             obs.get_concurrency_cost()*100.0,
              obs.get_concurrency_profit()*100.0);
 }
 
@@ -378,26 +414,27 @@ fn print_convergency(initial_triplet: Triplet, step: usize, member: f64) {
 }
 
 fn print_profit_separator() {
-    println!("------------------------------------------------------------");
+    println!("------------------------------------------------------------------");
 }
 
 fn print_profit_footer() {
-    println!("============================================================");
+    println!("==================================================================");
 }
 
 
 // Formatting and saving a report
 
 fn format_observation_totals_section_header() -> String {
-    "Tasks,Mean task duration,Std. dev.,Total duration,Profit\n".to_string()
+    "Tasks,Mean task duration,Std. dev.,Total duration,Cost,Profit\n".to_string()
 }
 
 fn format_observation_totals(obs: &Observation) -> String {
-    format!("{}, {}, {}, {}, {:.0}%\n", 
+    format!("{}, {}, {}, {}, {:.0}%, {:.0}%\n", 
             obs.count_tasks(),
             obs.get_mean_task_duration(),
             obs.get_standard_deviation(),
             obs.get_total_duration(), 
+            obs.get_concurrency_cost()*100.0,
             obs.get_concurrency_profit()*100.0)
 }
 
