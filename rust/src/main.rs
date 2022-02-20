@@ -325,7 +325,7 @@ fn observe(n_tasks: usize, n_cycles: usize, series_size: usize) -> Observation {
         });
     }
 
-    let mut obs = Observation::create(handles.capacity());
+    let mut obs = Observation::create(n_tasks);
     for handle in handles {
         obs.register_task(handle.join());
     }

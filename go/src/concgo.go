@@ -84,17 +84,22 @@ func iterate(initial_triplet Triplet, n_cycles int) float64 {
 	return triplet[2]
 }
 
-func standard_task(n_cycles int) Task {
+func standard_task(task_idx, n_cycles int) Task {
 	start := now_ms()
 	iterate(random_triplet(), n_cycles)
-	return create_task(start, duration_ms(start))
+	return create_task(task_idx, start, duration_ms(start))
 }
 
 // Managing observation outcomes
 
 type Task struct {
+	idx      int
 	start    TimeMs
 	duration TimeMs
+}
+
+func (t Task) get_idx() int {
+	return t.idx
 }
 
 func (t Task) get_start() TimeMs {
@@ -113,17 +118,18 @@ func (t Task) get_duration() TimeMs {
 	return t.duration
 }
 
-func create_task(start TimeMs, duration TimeMs) Task {
-	return Task{start, duration}
+func create_task(idx int, start TimeMs, duration TimeMs) Task {
+	return Task{idx, start, duration}
 }
 
 type Observation struct {
 	tasks              []Task
+	concurrency_cost   float64
 	concurrency_profit float64
 }
 
 func (o *Observation) register_task(task Task) {
-	o.tasks = append(o.tasks, task)
+	o.tasks[task.get_idx()] = task
 }
 
 func (o Observation) count_tasks() int {
@@ -199,22 +205,47 @@ func (o Observation) get_standard_deviation() TimeMs {
 	return 0 //int(math.Sqrt(float64(dispersion))) / (o.count_tasks() - 1)
 }
 
+func (o Observation) get_serial_duration(task_duration_min TimeMs) TimeMs {
+	return task_duration_min * o.count_tasks()
+}
+
+func (o Observation) get_concurrency_cost() float64 {
+	return o.concurrency_cost
+}
+
+func (o *Observation) calc_concurrency_cost(task_duration_min TimeMs) float64 {
+
+	serial_duration := float64(o.get_serial_duration(task_duration_min))
+	sum_duration := float64(o.sum_duration())
+
+	o.concurrency_cost = 1 - serial_duration/sum_duration
+
+	return o.concurrency_cost
+}
+
 func (o Observation) get_concurrency_profit() float64 {
 	return o.concurrency_profit
 }
 
-func (o Observation) calc_concurrency_profit(task_duration_min TimeMs) float64 {
+func (o *Observation) calc_concurrency_profit(task_duration_min TimeMs) float64 {
 
-	serial_duration := int(task_duration_min) * o.count_tasks()
+	serial_duration := float64(o.get_serial_duration(task_duration_min))
+	total_duration := float64(o.get_total_duration())
 
-	o.concurrency_profit =
-		1 - float64(o.get_total_duration())/float64(serial_duration)
+	o.concurrency_profit = 1 - total_duration/serial_duration
 
 	return o.concurrency_profit
 }
 
-func create_observation() Observation {
-	return Observation{[]Task{}, 0.0}
+func create_observation(n_tasks int) Observation {
+
+	obs := Observation{[]Task{}, 0.0, 0.0}
+
+	for idx := 0; idx < n_tasks; idx++ {
+		obs.tasks = append(obs.tasks, create_task(idx, 0, 0))
+	}
+
+	return obs
 }
 
 type Report struct {
@@ -234,7 +265,9 @@ func (r *Report) register_observation(obs Observation) {
 	obs.recalc_tasks_relative_earliest_start()
 
 	if r.count_observations() > 0 {
-		obs.calc_concurrency_profit(r.get_task_duration_min())
+		task_duration_min := r.get_task_duration_min()
+		obs.calc_concurrency_cost(task_duration_min)
+		obs.calc_concurrency_profit(task_duration_min)
 	}
 
 	r.observations = append(r.observations, obs)
@@ -263,27 +296,26 @@ func count_series(n_tasks, series_size int) int {
 
 func observe(n_tasks, n_cycles, series_size int) Observation {
 
-	obs := create_observation()
+	obs := create_observation(n_tasks)
 
 	n_series := count_series(n_tasks, series_size)
-	var count_tasks_total int = 0
+	var task_idx int = 0
 	var count_tasks_series int = 0
 
 	for series_idx := 0; series_idx < n_series; series_idx++ {
 
 		var syncler sync.WaitGroup
 
-		for count_tasks_total < n_tasks && count_tasks_series < series_size {
+		for task_idx < n_tasks && count_tasks_series < series_size {
 
 			syncler.Add(1)
-
-			go func() {
-				obs.register_task(standard_task(n_cycles))
+			go func(_task_idx int) {
+				obs.register_task(standard_task(_task_idx, n_cycles))
 				syncler.Done()
-			}()
+			}(task_idx)
 
 			count_tasks_series++
-			count_tasks_total++
+			task_idx++
 		}
 
 		syncler.Wait()
@@ -346,17 +378,18 @@ func print_sysparams_footer() {
 }
 
 func print_profit_header() {
-	fmt.Println("============================================================")
-	fmt.Println("Tasks  Mean task duration  Std. dev.  Total duration  Profit")
-	fmt.Println("============================================================")
+	fmt.Println("==================================================================")
+	fmt.Println("Tasks  Mean task duration  Std. dev.  Total duration  Cost  Profit")
+	fmt.Println("==================================================================")
 }
 
 func print_profit_entry(obs *Observation) {
-	fmt.Printf("%5d %19d %10d %15d %6.0f%%\n",
+	fmt.Printf("%5d %19d %10d %15d %4.0f%% %6.0f%%\n",
 		obs.count_tasks(),
 		obs.get_mean_task_duration(),
 		obs.get_standard_deviation(),
 		obs.get_total_duration(),
+		obs.get_concurrency_cost()*100.0,
 		obs.get_concurrency_profit()*100.0)
 }
 
@@ -370,11 +403,11 @@ func print_convergency(initial_triplet Triplet, step int, member float64) {
 }
 
 func print_profit_separator() {
-	fmt.Println("------------------------------------------------------------")
+	fmt.Println("------------------------------------------------------------------")
 }
 
 func print_profit_footer() {
-	fmt.Println("============================================================")
+	fmt.Println("==================================================================")
 }
 
 // Formatting and saving a report
@@ -384,11 +417,12 @@ func format_observation_totals_section_header() string {
 }
 
 func format_observation_totals(obs *Observation) string {
-	return fmt.Sprintf("%d, %d, %d, %d, %f%%\n",
+	return fmt.Sprintf("%d, %d, %d, %d, %f%%, %f%%\n",
 		obs.count_tasks(),
 		obs.get_mean_task_duration(),
 		obs.get_standard_deviation(),
 		obs.get_total_duration(),
+		obs.get_concurrency_cost()*100.0,
 		obs.get_concurrency_profit()*100.0)
 }
 
@@ -648,122 +682,3 @@ func main() {
 
 	}
 }
-
-// Retrieving system parameters
-
-/* func count_cpus() int {
-	return runtime.NumCPU()
-} */
-
-// Spending time
-
-/* func complex_task() float32 {
-
-	var k float32
-
-	for i := 0; i < 500000000; i++ {
-		k += 2636625362.0 / 2763.0
-	}
-
-	fmt.Println(k)
-
-	return k
-} */
-
-// Performing observations
-
-/* func fulfil_observation(number_of_cpus int) int {
-
-	var syncler sync.WaitGroup
-
-	time_start := time.Now()
-
-	for i := 0; i < number_of_cpus; i++ {
-		syncler.Add(1)
-		go func() {
-			_ = complex_task()
-			syncler.Done()
-		}()
-	}
-
-	syncler.Wait()
-
-	time_finish := time.Now()
-	duration := time_finish.Sub(time_start)
-
-	return int(duration.Milliseconds())
-}
-
-func measure_base_duration() int {
-
-	number_of_iterations := 10
-
-	sumdur := 0
-
-	for i := 0; i < number_of_iterations; i++ {
-		sumdur += fulfil_observation(1)
-	}
-
-	return sumdur / number_of_iterations
-} */
-
-// Printing a report
-
-/* func print_report_header(number_of_cpus int) {
-	fmt.Println("Testing concurent code execution in Go.")
-	fmt.Printf("Number of CPUs in the system: %v.\n", number_of_cpus)
-}
-
-func print_report_table_header() {
-	fmt.Println("==========================================")
-	fmt.Println("Tasks  Duration  Relative duration  Profit")
-	fmt.Println("==========================================")
-}
-
-func print_report_table_entry(number_of_tasks, base_duration, duration int) {
-	k := float32(duration) / float32(base_duration)
-	linear_duration := number_of_tasks * base_duration
-	profit := 100 * (linear_duration - duration) / linear_duration
-
-	"{:5} {:9} {:18.3} {:6}%", number_of_tasks, duration, k, profit
-
-	fmt.Printf("%5d %9d %18.3f %6d\n", number_of_tasks, duration, k, profit)
-}
-
-func print_report_table_separator() {
-	fmt.Println("------------------------------------------")
-}
-
-func print_report_table_footer() {
-	fmt.Println("==========================================")
-}
-
-func main() {
-
-	number_of_cpus := count_cpus()
-
-	print_report_header(number_of_cpus)
-
-	print_report_table_header()
-
-	var number_of_tasks, duration int
-
-	base_duration := measure_base_duration()
-
-	for layer := 0; layer < 3; layer++ {
-		for cpu := 0; cpu < number_of_cpus; cpu++ {
-			number_of_tasks = 1 + cpu + layer*number_of_cpus
-			duration = fulfil_observation(number_of_tasks)
-			print_report_table_entry(number_of_tasks, base_duration, duration)
-		}
-
-		print_report_table_separator()
-	}
-
-	number_of_tasks = number_of_cpus * 10
-	duration = fulfil_observation(number_of_tasks)
-	print_report_table_entry(number_of_tasks, base_duration, duration)
-
-	print_report_table_footer()
-
-} */
