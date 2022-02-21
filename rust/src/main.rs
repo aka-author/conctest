@@ -421,6 +421,10 @@ fn print_profit_footer() {
     println!("==================================================================");
 }
 
+fn print_profit_duration(duration_ms: TimeMs) {
+    println!("\nTotal duration: {} sec.", duration_ms/1000);
+}
+
 
 // Formatting and saving a report
 
@@ -524,9 +528,11 @@ fn test_sysparams() {
 }
 
 fn test_concurrency_profit(tasks_max: usize, n_cycles: usize, series_size: usize) -> Report {
-    
+
     let mut report = Report::create(tasks_max);
 
+    let watch = SystemTime::now();
+    
     print_profit_header();
 
     for n_tasks in 1..tasks_max + 1 {
@@ -542,6 +548,8 @@ fn test_concurrency_profit(tasks_max: usize, n_cycles: usize, series_size: usize
     } 
 
     print_profit_footer();
+
+    print_profit_duration(duration_ms(&watch));
 
     report
 }

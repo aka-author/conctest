@@ -192,17 +192,22 @@ func (o Observation) get_mean_task_duration() TimeMs {
 
 func (o Observation) get_standard_deviation() TimeMs {
 
-	var dispersion int = 0
-	var deviation TimeMs
+	if o.count_tasks() > 1 {
 
-	mean_task_duration := o.get_mean_task_duration()
+		var dispersion TimeMs = 0
+		var deviation TimeMs
 
-	for _, task := range o.tasks {
-		deviation = mean_task_duration - task.get_duration()
-		dispersion += int(deviation * deviation)
+		mean_task_duration := o.get_mean_task_duration()
+
+		for _, task := range o.tasks {
+			deviation = mean_task_duration - task.get_duration()
+			dispersion += deviation * deviation
+		}
+
+		return int(math.Sqrt(float64(dispersion))) / (o.count_tasks() - 1)
+	} else {
+		return 0
 	}
-
-	return 0 //int(math.Sqrt(float64(dispersion))) / (o.count_tasks() - 1)
 }
 
 func (o Observation) get_serial_duration(task_duration_min TimeMs) TimeMs {
@@ -410,6 +415,10 @@ func print_profit_footer() {
 	fmt.Println("==================================================================")
 }
 
+func print_profit_duration(duration_ms TimeMs) {
+	fmt.Printf("\nTotal duration: %d sec.", duration_ms/1000)
+}
+
 // Formatting and saving a report
 
 func format_observation_totals_section_header() string {
@@ -515,6 +524,8 @@ func test_concurrency_profit(tasks_max, n_cycles, series_size int) Report {
 
 	report := create_report()
 
+	start := now_ms()
+
 	print_profit_header()
 
 	for n_tasks := 1; n_tasks <= tasks_max; n_tasks++ {
@@ -530,6 +541,8 @@ func test_concurrency_profit(tasks_max, n_cycles, series_size int) Report {
 	}
 
 	print_profit_footer()
+
+	print_profit_duration(duration_ms(start))
 
 	return report
 }
@@ -643,8 +656,6 @@ func (a *Args) parse(args []string) {
 			a.out_file_path = a.parse_out_file_path(args)
 		}
 	}
-
-	//return a
 }
 
 func (a Args) is_valid() bool {
