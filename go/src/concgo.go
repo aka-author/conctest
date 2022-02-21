@@ -311,6 +311,8 @@ func observe(n_tasks, n_cycles, series_size int) Observation {
 
 		var syncler sync.WaitGroup
 
+		count_tasks_series = 0
+
 		for task_idx < n_tasks && count_tasks_series < series_size {
 
 			syncler.Add(1)
@@ -422,7 +424,7 @@ func print_profit_duration(duration_ms TimeMs) {
 // Formatting and saving a report
 
 func format_observation_totals_section_header() string {
-	return "Tasks,Mean task duration,Std. dev.,Total duration,Profit\n"
+	return "Tasks,Mean task duration,Std. dev.,Total duration,Report,Profit\n"
 }
 
 func format_observation_totals(obs *Observation) string {
