@@ -316,6 +316,7 @@ func observe(n_tasks, n_cycles, series_size int) Observation {
 		for task_idx < n_tasks && count_tasks_series < series_size {
 
 			syncler.Add(1)
+
 			go func(_task_idx int) {
 				obs.register_task(standard_task(_task_idx, n_cycles))
 				syncler.Done()
@@ -424,7 +425,7 @@ func print_profit_duration(duration_ms TimeMs) {
 // Formatting and saving a report
 
 func format_observation_totals_section_header() string {
-	return "Tasks,Mean task duration,Std. dev.,Total duration,Report,Profit\n"
+	return "Tasks,Mean task duration,Std. dev.,Total duration,Cost,Profit\n"
 }
 
 func format_observation_totals(obs *Observation) string {
