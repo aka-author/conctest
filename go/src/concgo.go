@@ -672,6 +672,8 @@ func (a Args) is_valid() bool {
 
 func main() {
 
+	runtime.GOMAXPROCS(count_cpus())
+
 	print_salutation()
 
 	var args Args
